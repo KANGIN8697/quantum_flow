@@ -1,0 +1,14 @@
+aiohttp>=3.9.5
+websockets>=12.0
+pandas-ta>=0.3.14b
+pandas>=2.2.2
+numpy>=1.26.4
+yfinance>=0.2.40
+feedparser>=6.0.11
+requests>=2.32.3
+python-telegram-bot>=21.5
+pytz>=2024.1
+python-dotenv>=1.0.1
+crewai>=0.51.0
+openai>=1.40.0
+pycryptodome>=3.20.0
