@@ -42,13 +42,20 @@ logger = logging.getLogger("quantum_flow")
 BANNER = r"""
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║     Q  U  A  N  T  U  M            F  L  O  W   —  AI 한국 주식 자동매매 시스템     ║
+║    ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗██╗   ██╗   ║
+║   ██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝██║   ██║   ║
+║   ██║   ██║██║   ██║███████║██╔██╗ ██║   ██║   ██║   ██║   ║
+║   ██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║   ██║   ██║   ║
+║   ╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║   ╚██████╔╝   ║
+║    ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝    ║
+║                                                              ║
+║      F  L  O  W  #—  AI 한국 주식 자동매매 시스템           ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
 
-# ── 환경변수 검증 ────────────────────────────────────────────
+# ── 환경변수 검증 ─────────────────────────────────────────────
 
 def check_env(use_paper: bool) -> bool:
     """
@@ -70,15 +77,15 @@ def check_env(use_paper: bool) -> bool:
             missing.append("KIS_PAPER_APP_KEY")
         if not os.getenv("KIS_PAPER_APP_SECRET"):
             missing.append("KIS_PAPER_APP_SECRET")
-        if not os.getenv("KIS_PAPER_ACCOUNT"):
-            missing.append("KIS_PAPER_ACCOUNT  (예: 50123456-01)")
+        if not os.getenv("KIS_ACCOUNT_NO"):
+            missing.append("KIS_ACCOUNT_NO  (예: 50123456-01)")
     else:
         if not os.getenv("KIS_APP_KEY"):
             missing.append("KIS_APP_KEY")
         if not os.getenv("KIS_APP_SECRET"):
             missing.append("KIS_APP_SECRET")
-        if not os.getenv("KIS_ACCOUNT"):
-            missing.append("KIS_ACCOUNT  (예: 12345678-01)")
+        if not os.getenv("KIS_ACCOUNT_NO"):
+            missing.append("KIS_ACCOUNT_NO  (예: 12345678-01)")
 
     # OpenAI — 선택(없으면 기본값 사용)
     if not os.getenv("OPENAI_API_KEY"):
@@ -150,10 +157,11 @@ async def send_end_of_day_report(log: logging.Logger = logger):
 
     if not os.path.exists(orders_file):
         log.warning(f"  ⚠️  주문 파일 없음: {orders_file}")
-        await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
             None,
             notify_daily_report,
-            {"message": "오늘 체결된 주문 없음 또는 파일 미생성"},
+            0, 0, 0, 0.0, 0.0, [],  # 거래 없음 기본값
         )
         return
 
@@ -212,7 +220,14 @@ async def send_end_of_day_report(log: logging.Logger = logger):
 
     try:
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, notify_daily_report, report)
+        use_paper = os.getenv("USE_PAPER", "true").lower() == "true"
+        mode_str  = "모의투자" if use_paper else "실전투자"
+        await loop.run_in_executor(
+            None, notify_daily_report,
+            total_trades, win_count, lose_count,
+            total_pnl, round(win_rate, 1),
+            [], mode_str,
+        )
         log.info("  ✅ Telegram 결산 보고 전송 완료")
     except Exception as e:
         log.error(f"  ⚠️  Telegram 전송 실패: {e}")
@@ -247,16 +262,14 @@ async def main(dry_run: bool = False):
 
     KST 기준 스케줄:
       06:00  거시 분석 (macro_analyst)
-      08:30  1차 스캔 (market_scanner) + MarketWatcher 시작
-      09:10  HeadStrategist 매매 시작 (→ 15:20 자동 종료)
-      11:30  2차 스캔 (HeadStrategist 와 병렬)
+      08:30  1j��ȪN˩B��&�WE�66��W"���&�WEvF6�W"ȹ�������VE7G&FVv�7B�zN�zBȹ����(i"S�#������(^�8��3&��( 스캔 (HeadStrategist 와 병렬)
       15:20↑ HeadStrategist 강제 청산 후 종료
-      이후   일별 결산 보고 전송
+      sebzⅡ�۔m  일별 결산 보고 전송
 
     Parameters
     ----------
     dry_run : bool
-        True → 실제 주문 없이 로그만 출력
+        True → 실제 주뫬� 없이 로그만 출력
     """
     use_paper = os.getenv("USE_PAPER", "true").lower() == "true"
     mode_str  = "모의투자" if use_paper else "실전투자"
@@ -341,11 +354,12 @@ async def main(dry_run: bool = False):
         dry_run=dry_run,
     )
 
-    # watch_list 주입 (scanner 결과 → shared_state 에도 저장됨)
+    # watch_list 주입 (scanner 결과 → shared_state 경유로 HeadStrategist가 읽음)
     try:
-        current_wl = get_state("watch_list") orwatch_list
-        strategist.watch_list = list(current_wl)
-        logger.info(f"  📋 감시 종목 {len(strategist.watch_list)}개 주입 완료")
+        from shared_state import set_state as _set_state
+        current_wl = get_state("watch_list") or watch_list
+        _set_state("watch_list", list(current_wl))
+        logger.info(f"  📋 감시 종목 {len(current_wl)}개 shared_state 주입 완료")
     except Exception as e:
         logger.warning(f"  ⚠️  watch_list 주입 실패: {e}")
 
@@ -354,7 +368,7 @@ async def main(dry_run: bool = False):
     # ══════════════════════════════════════════════════════════
     logger.info(f"\n{'='*55}")
     logger.info(f"  [09:10] STEP 4 — 매매 시작 (15:20 까지)")
-    logger.info(f"  dry_run={dry_run}  |  감시종목: {len(strategist.watch_list)}개")
+    logger.info(f"  dry_run={dry_run}  |  감시종목: {len(get_state('watch_list') or [])}개")
     logger.info(f"{'='*55}")
 
     rescan_task = asyncio.create_task(scheduled_rescan(logger))
@@ -440,7 +454,7 @@ if __name__ == "__main__":
         os.environ["USE_PAPER"] = "true"
     elif args.real:
         print("\n⚠️  실전투자 모드입니다. 실제 자금이 사용됩니다.")
-        confirm = input("계속하시겠습니까? (yes 입�%): ").strip().lower()
+        confirm = input("계속하시겠습니까? (yes 입력): ").strip().lower()
         if confirm != "yes":
             print("취소되었습니다.")
             sys.exit(0)
