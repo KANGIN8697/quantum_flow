@@ -3,7 +3,6 @@
 
 import os
 import time
-import asyncio
 import threading
 import requests
 import yfinance as yf
@@ -73,21 +72,30 @@ class MarketWatcher:
     """
 
     def __init__(self, check_interval: int = 60):
+        """
+        Parameters
+        ----------
+        check_interval : 감시 주기 (초, 기본 60초)
+        """
         self.check_interval = check_interval
         self._running = False
-        self._thread = None
+        self._thread: threading.Thread | None = None
 
-        self._prev = {
+        # 이전 지표 저장 (변동률 계산용)
+        self._prev: dict = {
             "vix":    None,
             "kospi":  None,
             "usdkrw": None,
         }
+
+    # ── 실행 / 중지 ──────────────────────────────────────────
 
     def run(self):
         """별도 스레드에서 감시 루프를 시작한다."""
         if self._running:
             print("⚠️  MarketWatcher가 이미 실행 중입니다.")
             return
+
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -111,15 +119,19 @@ class MarketWatcher:
                     pass
             time.sleep(self.check_interval)
 
+    # ── 1. 단일 감시 주기 실행 ───────────────────────────────
+
     def check_cycle(self):
         """한 번의 감시 주기를 실행한다."""
         now = datetime.now().strftime("%H:%M:%S")
         print(f"\n  🔭 [{MODE_LABEL}] 시장 감시 주기 시작 ({now})")
 
+        # Risk-Off 이미 선언된 경우 스킵
         if get_state("risk_off"):
             print("  ℹ️  Risk-Off 상태 유지 중 — 추가 점검 스킵")
             return
 
+        # 정량 트리거 확인
         triggered, trigger_details = self.check_quantitative_triggers()
 
         if len(triggered) >= RISK_OFF_TRIGGER_MIN:
@@ -127,6 +139,7 @@ class MarketWatcher:
             print(f"  ⏳ {RISK_OFF_CONFIRM_WAIT}초 유예 후 LLM 이중 검증...")
             time.sleep(RISK_OFF_CONFIRM_WAIT)
 
+            # 유예 후 재확인 (일시적 노이즈 필터링)
             triggered2, _ = self.check_quantitative_triggers()
             if len(triggered2) >= RISK_OFF_TRIGGER_MIN:
                 llm_confirm = self.check_llm_context(trigger_details)
@@ -139,60 +152,79 @@ class MarketWatcher:
         else:
             print(f"  ✅ 정상 범위 (트리거 {len(triggered)}개 / 기준 {RISK_OFF_TRIGGER_MIN}개)")
 
-    def check_quantitative_triggers(self):
-        """4가지 정량 지표를 확인하여 발동된 트리거 목록을 반환한다."""
+    # ── 2. 정량 트리거 확인 ──────────────────────────────────
+
+    def check_quantitative_triggers(self) -> tuple:
+        """
+        4가지 정량 지표를 확인하여 발동된 트리거 목록을 반환한다.
+
+        Returns
+        -------
+        (triggered: list, details: list[str])
+        """
         triggered = []
         details = []
 
+        # ─ VIX 급등 ───────────────────────────────────────
         try:
-            vix_data = yf.download(VIX_TICKER, period="2d", interval="1d",
+            vix_data = yf.download(VIX_TICKER, period="5d", interval="1d",
                                    progress=False, auto_adjust=True)
             if len(vix_data) >= 2:
                 vix_prev  = float(vix_data["Close"].iloc[-2])
                 vix_today = float(vix_data["Close"].iloc[-1])
                 vix_chg   = (vix_today - vix_prev) / vix_prev
+
                 if self._prev["vix"] is None:
                     self._prev["vix"] = vix_prev
+
                 print(f"    VIX: {vix_today:.2f}  (전일대비 {vix_chg:+.1%})")
+
                 if vix_chg >= VIX_SURGE_THRESHOLD:
                     triggered.append("VIX_SURGE")
                     details.append(f"VIX +{vix_chg:.1%} (기준 +{VIX_SURGE_THRESHOLD:.0%})")
         except Exception as e:
             print(f"    ⚠️  VIX 조회 실패: {e}")
 
+        # ─ 코스피 급락 ────────────────────────────────────
         try:
-            ks_data = yf.download(KOSPI_TICKER, period="2d", interval="1d",
+            ks_data = yf.download(KOSPI_TICKER, period="5d", interval="1d",
                                   progress=False, auto_adjust=True)
             if len(ks_data) >= 2:
                 ks_prev  = float(ks_data["Close"].iloc[-2])
                 ks_today = float(ks_data["Close"].iloc[-1])
                 ks_chg   = (ks_today - ks_prev) / ks_prev
+
                 print(f"    KOSPI: {ks_today:,.0f}  (전일대비 {ks_chg:+.2%})")
+
                 if ks_chg <= KOSPI_DROP_THRESHOLD:
                     triggered.append("KOSPI_DROP")
                     details.append(f"KOSPI {ks_chg:+.2%} (기준 {KOSPI_DROP_THRESHOLD:.0%})")
         except Exception as e:
             print(f"    ⚠️  KOSPI 조회 실패: {e}")
 
+        # ─ 달러/원 급변 ──────────────────────────────────
         try:
-            fx_data = yf.download(USDKRW_TICKER, period="2d", interval="1d",
+            fx_data = yf.download(USDKRW_TICKER, period="5d", interval="1d",
                                   progress=False, auto_adjust=True)
             if len(fx_data) >= 2:
                 fx_prev  = float(fx_data["Close"].iloc[-2])
                 fx_today = float(fx_data["Close"].iloc[-1])
                 fx_chg   = abs(fx_today - fx_prev)
+
                 print(f"    USD/KRW: {fx_today:.1f}  (전일대비 {fx_today - fx_prev:+.1f}원)")
+
                 if fx_chg >= FX_CHANGE_THRESHOLD:
                     triggered.append("FX_SURGE")
                     details.append(f"USD/KRW ±{fx_chg:.0f}원 (기준 ±{FX_CHANGE_THRESHOLD}원)")
         except Exception as e:
             print(f"    ⚠️  FX 조회 실패: {e}")
 
+        # ─ 시총 상위 10 하락 종목 수 ─────────────────────
         try:
             drop_count = 0
-            for ticker in TOP10_TICKERS[:5]:
+            for ticker in TOP10_TICKERS[:5]:   # API 부하 감소를 위해 5개만
                 try:
-                    d = yf.download(ticker, period="2d", interval="1d",
+                    d = yf.download(ticker, period="5d", interval="1d",
                                     progress=False, auto_adjust=True)
                     if len(d) >= 2:
                         chg = (float(d["Close"].iloc[-1]) - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2])
@@ -200,26 +232,42 @@ class MarketWatcher:
                             drop_count += 1
                 except Exception:
                     pass
+
             print(f"    시총상위5 하락: {drop_count}종목")
-            estimated_drop = drop_count * 2
+
+            # 비율�� 환산 (5개 중 → 10개 기준 추정: 비율 유지)
+            estimated_drop = int(drop_count / 5 * 10)
             if estimated_drop >= MARKET_DROP_COUNT:
                 triggered.append("MARKET_DROP")
                 details.append(f"시총상위 하락 ~{estimated_drop}종목 (기준 {MARKET_DROP_COUNT}종목)")
+
         except Exception as e:
             print(f"    ⚠️  시총 상위 조회 실패: {e}")
 
         return triggered, details
 
-    def check_llm_context(self, trigger_details):
-        """OpenAI GPT로 Risk-Off 선언의 타당성을 이중 검증한다."""
+    # ── 3. LLM 이중 검증 ────────────────────────────────────
+
+    def check_llm_context(self, trigger_details: list) -> bool:
+        """
+        OpenAI GPT를 사용하여 Risk-Off 선언의 타당성을 이중 검증한다.
+
+        트리거 상황 + 현재 포지션 + 최근 뉴스를 바탕으로
+        GPT가 'YES'/'NO'로 판단.
+
+        Returns
+        -------
+        bool: True면 Risk-Off 선언 확정
+        """
         if not OPENAI_API_KEY:
             print("  ⚠️  [LLM] OPENAI_API_KEY 없음 — 정량 판단만 사용")
-            return True
+            return True   # API 키 없으면 정량 판단 따름
 
         try:
             from openai import OpenAI
             client = OpenAI(api_key=OPENAI_API_KEY)
 
+            # 현재 포지션 정보
             positions = get_positions()
             pos_summary = ""
             if positions:
@@ -231,6 +279,7 @@ class MarketWatcher:
             else:
                 pos_summary = "\n현재 보유 포지션: 없음"
 
+            # 뉴스 ���성텍스트 (보유 종목 첫 번째)
             news_ctx = ""
             if positions:
                 first_code = list(positions.keys())[0]
@@ -238,7 +287,8 @@ class MarketWatcher:
 
             trigger_str = "\n".join(f"- {t}" for t in trigger_details)
 
-            prompt = f"""당신은 한국 주식 시장 Risk 관리 전문가입니다.
+            prompt = f"""
+당신은 한국 주식 시장 Risk 관리 전문가입니다.
 아래 상황에서 즉각적인 Risk-Off 선언(전 포지션 청산 + 신규 매수 중단)이 필요한지 판단해주세요.
 
 [발동된 거시 지표 트리거]
@@ -252,7 +302,8 @@ class MarketWatcher:
 - YES: 시장 붕괴 위험이 높아 즉각 청산이 필요한 경우
 - NO: 일시적 노이즈로 파라미터 조정만으로 충분한 경우
 
-반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하고, 그 이유를 한 문장으로 설명하세요.""".strip()
+반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하고, 그 이유를 한 문장으로 설명하세요.
+""".strip()
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -272,10 +323,15 @@ class MarketWatcher:
 
         except Exception as e:
             print(f"  ⚠️  [LLM] 검증 오류: {e} — 정량 판단 따름")
-            return True
+            return True   # 오류 시 안전을 위해 Risk-Off 선언
 
-    def declare_risk_off(self, triggered, details):
-        """Risk-Off를 선언하고 shared_state를 업데이트한다."""
+    # ── 4. Risk-Off 선언 ────────────────────────────────────
+
+    def declare_risk_off(self, triggered: list, details: list):
+        """
+        Risk-Off를 선언하고 shared_state를 업데이트한다.
+        포지션 청산은 head_strategist가 감지하여 실행.
+        """
         print(f"\n  🚨 [{MODE_LABEL}] ⚡ RISK-OFF 선언! 트리거: {triggered}")
 
         set_state("risk_off", True)
@@ -295,8 +351,13 @@ class MarketWatcher:
         except Exception as e:
             print(f"  ⚠️  [텔레그램] Risk-Off 알림 실패: {e}")
 
-    def adjust_params_only(self, triggered):
-        """Risk-Off 선언 없이 리스크 파라미터만 강화한다."""
+    # ── 5. 파라미터 조정만 (Risk-Off 미선언) ────────────────
+
+    def adjust_params_only(self, triggered: list):
+        """
+        Risk-Off 선언 없이 리스크 파라미터만 강화한다.
+        LLM이 'NO'로 판단한 경우 실행.
+        """
         print(f"  ⚡ [{MODE_LABEL}] 파라미터 조정 (HIGH 모드): {triggered}")
 
         update_risk_params({
