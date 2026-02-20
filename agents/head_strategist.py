@@ -381,7 +381,7 @@ class HeadStrategist:
             if result2.get("success"):
                 await self._on_sell_done(code, position, int(current_price), "트레일링_시장가")
 
-    # ── 신규 매수 신호 ───────────────────────────────────────
+    # ── 신규 매수 신호 ────────────────────────────────────────
 
     async def check_buy_signal(self, code: str):
         """
@@ -621,7 +621,7 @@ class HeadStrategist:
         )
 
     async def _execute_sell(self, code: str, position: dict, reason: str):
-        """손절 매도를 실행한다 (dry_run 체크 포함)."""
+        """손절 매도 실행 (�ry_run 체크 포함)."""
         qty           = int(position.get("qty") or 0)
         current_price = int(position.get("current_price") or 0)
 
@@ -676,10 +676,10 @@ class HeadStrategist:
             if entry_price > 0 else 0.0
         )
 
-        # 일 손실 누적
+        # 일 손실 누적 (pnl_pct는 이미 % 단위: -5.2 = -5.2%)
         if pnl_pct < 0:
             daily_loss = float(get_state("daily_loss") or 0.0)
-            set_state("daily_loss", daily_loss + pnl_pct / 100)
+            set_state("daily_loss", daily_loss + pnl_pct)
 
         remove_position(code)
         add_to_blacklist(code)
