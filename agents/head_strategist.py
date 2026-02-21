@@ -166,7 +166,7 @@ class _RateLimiter:
 
     async def acquire(self):
         await self._sem.acquire()
-        asyncio.get_event_loop().call_later(1.0, self._sem.release)
+        asyncio.get_running_loop().call_later(1.0, self._sem.release)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -615,7 +615,7 @@ class HeadStrategist:
 
     async def _run_sync(self, func, *args, **kwargs):
         """동기 함수를 executor에서 비동기로 실행한다."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, lambda: func(*args, **kwargs)
         )
