@@ -5,10 +5,16 @@
 import os
 import json
 import requests
+from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── HTTP 세션 풀 (TCP 재사용, 자동 재시도) ──────────────────────
+_RETRY = Retry(total=3, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503])
+_SESSION = requests.Session()
+_SESSION.mount("https://", HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=_RETRY))
 
 # ── 환경변수 ───────────────────────────────────────────────────
 USE_PAPER = os.getenv("USE_PAPER", "true").lower() == "true"
@@ -116,7 +122,7 @@ def buy_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
-        resp = requests.post(url, headers=_headers(TR_BUY), json=body, timeout=10)
+        resp = _SESSION.post(url, headers=_headers(TR_BUY), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -180,7 +186,7 @@ def sell_market(code: str, qty: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
-        resp = requests.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
+        resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -240,7 +246,7 @@ def sell_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
-        resp = requests.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
+        resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -308,7 +314,7 @@ def cancel_order(order_no: str, code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
-        resp = requests.post(url, headers=_headers(TR_CANCEL), json=body, timeout=10)
+        resp = _SESSION.post(url, headers=_headers(TR_CANCEL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -377,7 +383,7 @@ def get_balance() -> dict:
     }
 
     try:
-        resp = requests.get(url, headers=_headers(TR_BALANCE), params=params, timeout=10)
+        resp = _SESSION.get(url, headers=_headers(TR_BALANCE), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -447,7 +453,7 @@ def get_order_status(order_no: str) -> dict:
     }
 
     try:
-        resp = requests.get(url, headers=_headers(TR_ORDERS), params=params, timeout=10)
+        resp = _SESSION.get(url, headers=_headers(TR_ORDERS), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
