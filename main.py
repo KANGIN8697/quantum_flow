@@ -338,7 +338,8 @@ async def main(dry_run: bool = False):
 
     # MarketWatcher 시작 (백그라운드)
     watcher = MarketWatcher()
-    watcher_task = asyncio.create_task(watcher.run())
+    watcher.run()  # threading 기반 - daemon thread 시작
+    watcher_task = None
     logger.info("  ✅ MarketWatcher 백그라운드 시작")
 
     # ══════════════════════════════════════════════════════════
@@ -394,7 +395,8 @@ async def main(dry_run: bool = False):
     logger.info(f"{'='*55}")
     try:
         watcher.stop()
-        watcher_task.cancel()
+        if watcher_task:
+            watcher_task.cancel()
         await asyncio.sleep(1)
         logger.info("  ✅ MarketWatcher 중지 완료")
     except Exception as e:
