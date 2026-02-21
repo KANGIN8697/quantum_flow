@@ -3,10 +3,16 @@
 
 import os
 import requests
+from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── HTTP 세션 (텔레그램 API, TCP 재사용 + 자동 재시도) ──────────
+_TG_RETRY = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503])
+_TG_SESSION = requests.Session()
+_TG_SESSION.mount("https://", HTTPAdapter(pool_connections=1, pool_maxsize=4, max_retries=_TG_RETRY))
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -19,7 +25,7 @@ def _send(text, parse_mode="HTML"):
         print(f"  [텔레그램] 설정 없음 — 콘솔: {text[:60]}...")
         return False
     try:
-        resp = requests.post(
+        resp = _TG_SESSION.post(
             TELEGRAM_API,
             json={"chat_id":CHAT_ID,"text":text,"parse_mode":parse_mode},
             timeout=10,
