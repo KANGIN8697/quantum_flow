@@ -31,14 +31,29 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "")
 
 # FRED 시리즈 ID
-FRED_SERIES = {
-    "VIX":    "VIXCLS",        # VIX 공포지수
-    "DXY":    "DTWEXBGS",      # 달러 인덱스 (Broad)
-    "TNX":    "DGS10",         # 미국채 10년 금리
-    "SP500":  "SP500",         # S&P 500
-    "USDKRW": "DEXKOUS",      # 달러/원 환율
-    "FEDFUNDS": "FEDFUNDS",   # 연방기금금리
+FRED_SERIES_DAILY = {
+    "VIX":       "VIXCLS",      # VIX 공포지수
+    "DXY":       "DTWEXBGS",    # 달러 인덱스 (Broad)
+    "TNX":       "DGS10",       # 미국채 10년 금리
+    "SP500":     "SP500",       # S&P 500
+    "USDKRW":   "DEXKOUS",     # 달러/원 환율
+    "FEDFUNDS": "FEDFUNDS",    # 연방기금금리
+    "T10Y2Y":   "T10Y2Y",      # 10년-2년 금리차
+    "T10YIE":   "T10YIE",      # 10년 기대인플레이션
 }
+
+FRED_SERIES_TREND = {
+    "CPI":       "CPIAUCSL",    # 소비자물가지수 (월간)
+    "CORE_CPI":  "CPILFESL",    # 근원 CPI (월간)
+    "PCE":       "PCEPI",       # PCE 물가지수 (월간)
+    "M2":        "WM2NS",       # M2 통화량 (주간)
+    "FED_ASSETS":"WALCL",       # 연준 총자산 (주간)
+    "ICSA":      "ICSA",        # 신규 실업수당 (주간)
+    "UNRATE":    "UNRATE",      # 실업률 (월간)
+    "UMCSENT":   "UMCSENT",     # 소비자심리지수 (월간)
+}
+
+FRED_SERIES = {**FRED_SERIES_DAILY, **FRED_SERIES_TREND}
 
 # 긴급 뉴스 키워드 (가중치 포함)
 URGENT_KEYWORDS = {
@@ -100,8 +115,11 @@ def fetch_fred_series(series_id: str, days_back: int = 10) -> dict:
 def fetch_all_fred() -> dict:
     """모든 FRED 거시 지표를 한번에 조회"""
     results = {}
-    for name, sid in FRED_SERIES.items():
+    for name, sid in FRED_SERIES_DAILY.items():
         results[name] = fetch_fred_series(sid)
+    # Trend indicators (90-day lookback)
+    for name, sid in FRED_SERIES_TREND.items():
+        results[name] = fetch_fred_series(sid, days_back=90)
     return results
 
 
@@ -311,11 +329,14 @@ def collect_all_macro_data() -> dict:
     
     # 3) 거시 데이터 통합 (FRED 우선, yfinance 보완)
     merged = {}
+    YF_PREFER = {"DXY", "USDKRW"}
     for key in ["VIX", "DXY", "TNX", "SP500", "USDKRW"]:
         fred_val = fred_data.get(key, {})
         yf_val = yf_data.get(key, {})
         
-        if fred_val.get("value", 0) > 0:
+        if key in YF_PREFER and yf_val.get("value", 0) > 0:
+            merged[key] = {"value": yf_val["value"], "change_pct": yf_val.get("change_pct", 0), "date": yf_val.get("date", ""), "source": "yfinance", "fred_value": fred_val.get("value", 0), "fred_date": fred_val.get("date", "")}
+        elif fred_val.get("value", 0) > 0:
             merged[key] = {
                 "value": fred_val["value"],
                 "date": fred_val.get("date", ""),
@@ -361,10 +382,41 @@ def collect_all_macro_data() -> dict:
     
     print(f"  ✅ 수집 완료: 지표 {len(merged)}개, 뉴스 {len(news)}건, 긴급={urgent['level']}")
     
+
+    # Trend data
+    trend_data = {}
+    for k in FRED_SERIES_TREND:
+        if k in fred_data and fred_data[k].get("value", 0) > 0:
+            trend_data[k] = fred_data[k]
+    result["trend_data"] = trend_data
+    result["trend_summary"] = _calc_trend_summary({**trend_data, **{k:v for k,v in fred_data.items() if k in ("T10Y2Y","T10YIE")}}
+)
     return result
 
 
 # ── 테스트 ────────────────────────────────────────────────
+
+
+def _calc_trend_summary(td: dict) -> dict:
+    s = {}
+    if "M2" in td:
+        v = td["M2"]["value"]
+        s["M2"] = f"${v/1e3:.1f}T" if v > 1000 else f"${v:.0f}B"
+    if "FED_ASSETS" in td:
+        v = td["FED_ASSETS"]["value"]
+        s["FED_ASSETS"] = f"${v/1e6:.2f}T" if v > 1e5 else f"${v:.0f}M"
+    if "CPI" in td:
+        s["CPI"] = f"{td['CPI']['value']:.1f}"
+    if "UNRATE" in td:
+        s["UNRATE"] = f"{td['UNRATE']['value']:.1f}%"
+    if "UMCSENT" in td:
+        s["UMCSENT"] = f"{td['UMCSENT']['value']:.1f}"
+    if "ICSA" in td:
+        s["ICSA"] = f"{td['ICSA']['value']/1e3:.0f}K"
+    if "T10Y2Y" in td:
+        v = td["T10Y2Y"]["value"]
+        s["yield_curve"] = "inverted" if v < 0 else "normal"
+    return s
 if __name__ == "__main__":
     print("=" * 60)
     print(" MacroDataTools 테스트")
