@@ -28,6 +28,9 @@ TOKEN_CACHE_PATH = os.path.join(
     "outputs", "token_cache.json"
 )
 
+# ── 인메모리 토큰 캐시 (프로세스 재시작 전까지 파일 I/O 불필요) ──────────
+_MEM: dict = {}  # {"access_token": str, "expires_at": datetime}
+
 
 # ── 1. 토큰 발급 ───────────────────────────────────────────────
 def get_access_token() -> str:
@@ -101,16 +104,39 @@ def is_token_valid() -> bool:
 def ensure_token() -> str:
     """
     모든 API 호출 전에 이 함수를 사용한다.
-    캐시가 유효하면 재사용, 만료 임박이면 자동 재발급.
+    1순위: 인메모리 캐시 (파일 I/O 없음)
+    2순위: 파일 캐시 (1회 읽기)
+    3순위: 신규 발급 (네트워크 호출)
     """
+    global _MEM
+    now = datetime.now()
+
+    # 1순위: 인메모리 캐시 확인 (파일 I/O 전혀 없음)
+    if _MEM.get("access_token") and _MEM.get("expires_at"):
+        if now < _MEM["expires_at"] - timedelta(minutes=30):
+            return _MEM["access_token"]
+
+    # 2순위: 파일 캐시 확인 (1회 읽기)
     if is_token_valid():
         with open(TOKEN_CACHE_PATH, "r", encoding="utf-8") as f:
             cache = json.load(f)
-        print(f"✅ [{MODE_LABEL}] 캐시된 토큰 재사용")
-        return cache["access_token"]
-    print(f"🔄 [{MODE_LABEL}] 토큰 재발급 중...")
-    return get_access_token()
+        _MEM = {
+            "access_token": cache["access_token"],
+            "expires_at":   datetime.fromisoformat(cache["expires_at"]),
+        }
+        print(f"✅ [{MODE_LABEL}] 캐시된 토큰 재사용 (파일→메모리 로드)")
+        return _MEM["access_token"]
 
+    # 3순위: 신규 발급 후 메모리 캐시에도 반영
+    print(f"🔄 [{MODE_LABEL}] 토큰 재발급 중...")
+    get_access_token()
+    with open(TOKEN_CACHE_PATH, "r", encoding="utf-8") as f:
+        cache = json.load(f)
+    _MEM = {
+        "access_token": cache["access_token"],
+        "expires_at":   datetime.fromisoformat(cache["expires_at"]),
+    }
+    return _MEM["access_token"]
 
 # ── 4. 웹소켓 접속키 발급 ─────────────────────────────────────
 def get_websocket_approval_key() -> str:
