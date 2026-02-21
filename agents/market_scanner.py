@@ -7,10 +7,16 @@ import os
 import json
 import asyncio
 import requests
+from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime, date
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── HTTP 세션 (KIS 스캔 API, TCP 재사용 + 자동 재시도) ──────────
+_SCAN_RETRY = Retry(total=3, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503])
+_SCAN_SESSION = requests.Session()
+_SCAN_SESSION.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=10, max_retries=_SCAN_RETRY))
 
 # ── 의존성 ────────────────────────────────────────────────────
 try:
@@ -95,7 +101,7 @@ def fetch_volume_top(top_n: int = 50) -> list:
             "FID_VOL_CNT":             "500000",  # 최소 거래량 50만
             "FID_INPUT_DATE_1":        "",
         }
-        resp = requests.get(url, headers=_headers("FHPST01710000"),
+        resp = _SCAN_SESSION.get(url, headers=_headers("FHPST01710000"),
                             params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -137,7 +143,7 @@ def _fetch_ohlcv(code: str, period: int = 25) -> object:
             "FID_PERIOD_DIV_CODE":    "D",
             "FID_ORG_ADJ_PRC":        "0",
         }
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        resp = _SCAN_SESSION.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -291,7 +297,7 @@ async def run_scanner(round_label: str = "1차") -> list:
     print(f"\n  🔍 [{MODE_LABEL}] {round_label} 스캐닝 시작: "
           f"{datetime.now().strftime('%H:%M:%S')}")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # 1. 거래량 상위 조회
     candidates = await loop.run_in_executor(None, fetch_volume_top, 50)
