@@ -1,6 +1,5 @@
 aiohttp>=3.9.5
 websockets>=12.0
-pandas-ta>=0.3.14b
 pandas>=2.2.2
 numpy>=1.26.4
 yfinance>=0.2.40
