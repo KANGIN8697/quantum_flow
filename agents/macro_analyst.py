@@ -180,7 +180,7 @@ async def run_macro_analysis() -> dict:
     """
     print(f"\n  📊 [{MODE_LABEL}] 거시경제 분석 시작: {datetime.now().strftime('%H:%M:%S')}")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # 1. 지표 수집 (동기 → executor)
     macro_data = await loop.run_in_executor(None, fetch_macro_data)
