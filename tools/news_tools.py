@@ -8,8 +8,16 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter, Retry
 
 load_dotenv()
+
+# ── HTTP 세션 (뉴스 API 공용, TCP 재사용 + 자동 재시도) ──────────
+_NEWS_RETRY = Retry(total=3, backoff_factor=0.3, status_forcelist=[429, 500, 502, 503])
+_NEWS_SESSION = requests.Session()
+_NEWS_SESSION.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=6, max_retries=_NEWS_RETRY))
+_NEWS_SESSION.mount("http://",  HTTPAdapter(pool_connections=2, pool_maxsize=6, max_retries=_NEWS_RETRY))
 
 # ── 환경변수 ───────────────────────────────────────────────────
 DART_API_KEY = os.getenv("DART_API_KEY", "")   # DART OpenAPI 키 (선택)
@@ -96,7 +104,7 @@ def fetch_dart_disclosures(
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = _NEWS_SESSION.get(url, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -158,14 +166,14 @@ def fetch_naver_news(
             "User-Agent": "Mozilla/5.0 (compatible; QUANTUM_FLOW/1.0)",
             "Accept": "application/rss+xml, application/xml, text/xml",
         }
-        resp = requests.get(
+        resp = _NEWS_SESSION.get(
             f"https://search.naver.com/search.naver?where=news&query={code}+주식&sort=1",
             headers=headers,
             timeout=10,
         )
 
         # RSS 방식으로 재시도
-        rss_resp = requests.get(
+        rss_resp = _NEWS_SESSION.get(
             f"https://finance.naver.com/item/news_news.naver?code={code}&page=1",
             headers=headers,
             timeout=10,
@@ -239,8 +247,12 @@ def get_all_news(
     -------
     list of dict (통합, 날짜순)
     """
-    dart_news   = fetch_dart_disclosures(code, days=days, max_items=max_per_source)
-    naver_news  = fetch_naver_news(code, max_items=max_per_source)
+    # DART 공시 + 네이버 뉴스 병렬 조회 (~50% 속도 향상)
+    with ThreadPoolExecutor(max_workers=2) as _ex:
+        _fut_dart  = _ex.submit(fetch_dart_disclosures, code, days=days, max_items=max_per_source)
+        _fut_naver = _ex.submit(fetch_naver_news, code, max_items=max_per_source)
+        dart_news  = _fut_dart.result()
+        naver_news = _fut_naver.result()
 
     combined = dart_news + naver_news
 
