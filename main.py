@@ -157,7 +157,7 @@ async def send_end_of_day_report(log: logging.Logger = logger):
 
     if not os.path.exists(orders_file):
         log.warning(f"  ⚠️  주문 파일 없음: {orders_file}")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
             notify_daily_report,
@@ -219,7 +219,7 @@ async def send_end_of_day_report(log: logging.Logger = logger):
     log.info("=" * 55)
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         use_paper = os.getenv("USE_PAPER", "true").lower() == "true"
         mode_str  = "모의투자" if use_paper else "실전투자"
         await loop.run_in_executor(
