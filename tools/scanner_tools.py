@@ -2,6 +2,7 @@
 # Phase 4 구현: 기술지표 계산, 매수/추가매수 신호 판단, 손절 계산
 
 import math
+import numpy as np
 from datetime import datetime
 
 try:
@@ -21,44 +22,49 @@ except ImportError:
 
 
 def calc_atr(df, period=ATR_PERIOD):
-    """Average True Range (ATR) 계산 (Wilder 방식)."""
+    """Average True Range (ATR) — numpy 벡터화 (Wilder 방식)."""
     if len(df) < period + 1: return 0.0
-    tr_list = []
-    for i in range(1, len(df)):
-        h=df['high'].iloc[i]; l=df['low'].iloc[i]; c=df['close'].iloc[i-1]
-        tr_list.append(max(h-l, abs(h-c), abs(l-c)))
-    if len(tr_list) < period:
-        return float(sum(tr_list)/len(tr_list)) if tr_list else 0.0
-    atr = sum(tr_list[:period]) / period
-    for tr in tr_list[period:]:
-        atr = (atr*(period-1)+tr)/period
+    h = df["high"].values.astype(float)
+    l = df["low"].values.astype(float)
+    c = df["close"].values.astype(float)
+    tr = np.maximum(h[1:] - l[1:],
+                    np.abs(h[1:] - c[:-1]),
+                    np.abs(l[1:] - c[:-1]))
+    if len(tr) < period:
+        return float(tr.mean()) if len(tr) > 0 else 0.0
+    atr = float(tr[:period].mean())
+    for val in tr[period:]:
+        atr = (atr * (period - 1) + val) / period
     return round(atr, 2)
 
 
 def calc_rsi(df, period=14):
-    """Relative Strength Index (RSI) 계산."""
-    closes = list(df['close'])
-    if len(closes) < period+1: return 50.0
-    gains, losses = [], []
-    for i in range(1, len(closes)):
-        d=closes[i]-closes[i-1]; gains.append(max(d,0)); losses.append(max(-d,0))
+    """Relative Strength Index (RSI) — numpy 벡터화."""
+    closes = df["close"].values.astype(float)
+    if len(closes) < period + 1: return 50.0
+    delta  = np.diff(closes)
+    gains  = np.where(delta > 0,  delta, 0.0)
+    losses = np.where(delta < 0, -delta, 0.0)
     if len(gains) < period: return 50.0
-    ag=sum(gains[:period])/period; al=sum(losses[:period])/period
-    for i in range(period, len(gains)):
-        ag=(ag*(period-1)+gains[i])/period; al=(al*(period-1)+losses[i])/period
-    if al==0: return 100.0
-    return round(100-(100/(1+ag/al)), 2)
+    ag = gains[:period].mean()
+    al = losses[:period].mean()
+    for g, lo in zip(gains[period:], losses[period:]):
+        ag = (ag * (period - 1) + g)  / period
+        al = (al * (period - 1) + lo) / period
+    if al == 0: return 100.0
+    return round(100 - (100 / (1 + ag / al)), 2)
 
 
 def calc_bollinger(df, period=20):
-    """Bollinger Bands 계산. 반환: {upper, mid, lower}"""
-    closes=list(df['close'])
-    if len(closes)<period:
-        last=closes[-1] if closes else 0
-        return {"upper":last,"mid":last,"lower":last}
-    recent=closes[-period:]; mid=sum(recent)/period
-    std=(sum((x-mid)**2 for x in recent)/period)**0.5
-    return {"upper":round(mid+2*std,2),"mid":round(mid,2),"lower":round(mid-2*std,2)}
+    """Bollinger Bands — numpy 벡터화. 반환: {upper, mid, lower}"""
+    closes = df["close"].values.astype(float)
+    if len(closes) < period:
+        last = float(closes[-1]) if len(closes) > 0 else 0
+        return {"upper": last, "mid": last, "lower": last}
+    recent = closes[-period:]
+    mid    = float(recent.mean())
+    std    = float(recent.std(ddof=0))
+    return {"upper": round(mid + 2*std, 2), "mid": round(mid, 2), "lower": round(mid - 2*std, 2)}
 
 
 def calc_donchian(df, period=DONCHIAN_PERIOD):
