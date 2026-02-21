@@ -37,6 +37,15 @@ except ImportError:
     def ensure_token(): return ""
     def notify_error(s, e, m): pass
 
+try:
+    from tools.stock_eval_tools import evaluate_stock, evaluate_multiple
+except ImportError:
+    def evaluate_stock(code, macro_sectors=None):
+        return {"code": code, "grade": "C", "total_score": 0, "position_pct": 0.5, "action": "평가불가"}
+    def evaluate_multiple(codes, macro_sectors=None):
+        return [evaluate_stock(c) for c in codes]
+
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 USE_PAPER      = os.getenv("USE_PAPER", "true").lower() == "true"
 MODE_LABEL     = "모의투자" if USE_PAPER else "실전투자"
@@ -319,6 +328,35 @@ async def run_scanner(round_label: str = "1차") -> list:
     if len(filtered) < 10:
         print("  ⚠️  필터 결과 부족 → 원본 상위 30종목 사용")
         filtered = candidates[:30]
+
+        # 2.5 주가 상승 지표 평가 (stock_eval)
+        print(f"  📊 종목 평가 진행 중 ({len(filtered)}종목)...")
+        try:
+            macro_state = get_state("macro_result") or {}
+            macro_sectors = {
+                "sectors": macro_state.get("sectors", []),
+                "avoid_sectors": macro_state.get("avoid_sectors", []),
+            }
+            eval_codes = [c["code"] for c in filtered]
+            eval_results = evaluate_multiple(eval_codes, macro_sectors)
+            # 평가 결과를 filtered에 매핑
+            eval_map = {r["code"]: r for r in eval_results}
+            for c in filtered:
+                ev = eval_map.get(c["code"], {})
+                c["eval_grade"] = ev.get("grade", "?")
+                c["eval_score"] = ev.get("total_score", 0)
+                c["eval_action"] = ev.get("action", "")
+                c["position_pct"] = ev.get("position_pct", 0.5)
+            # D/F 등급 필터링
+            before_cnt = len(filtered)
+            filtered = [c for c in filtered if c.get("eval_grade") not in ("D", "F")]
+            filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
+            print(f"  ✅ 평가 완료: {before_cnt}→{len(filtered)}종목 (D/F 제외)")
+            for c in filtered[:5]:
+                print(f"     {c['code']} [{c.get('eval_grade','?')}] score={c.get('eval_score',0)}")
+        except Exception as e:
+            print(f"  ⚠️ 종목 평가 스킵: {e}")
+
 
     # 3. LLM 최종 선정
     preferred  = get_state("preferred_sectors") or []
