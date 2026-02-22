@@ -10,8 +10,11 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime, date
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ── HTTP 세션 (KIS 스캔 API, TCP 재사용 + 자동 재시도) ──────────
 _SCAN_RETRY = Retry(total=3, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503])

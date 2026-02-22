@@ -7,6 +7,7 @@ import threading
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+import logging
 
 def safe_float(val, default=0.0):
     """pandas Series/numpy -> float safely"""
@@ -43,6 +44,8 @@ except ImportError:
     yf = None
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ── config 참조 ───────────────────────────────────────────────
 try:

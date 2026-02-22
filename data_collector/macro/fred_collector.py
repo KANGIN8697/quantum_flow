@@ -80,7 +80,7 @@ def fetch_fred_series(series_id: str, days_back: int = 10) -> dict:
     )
 
     try:
-        resp = requests.get(url, timeout=10)
+        resp = _request_with_retry(requests.get, url, timeout=10)
         data = resp.json()
         obs = data.get("observations", [])
 
@@ -145,7 +145,7 @@ def fetch_fred_time_series(series_id: str, days_back: int = 365) -> list:
     )
 
     try:
-        resp = requests.get(url, timeout=15)
+        resp = _request_with_retry(requests.get, url, timeout=15)
         data = resp.json()
         obs = data.get("observations", [])
 

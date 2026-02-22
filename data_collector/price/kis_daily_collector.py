@@ -54,7 +54,7 @@ def get_access_token() -> str:
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
         }
-        resp = requests.post(TOKEN_URL, headers=headers, json=body, timeout=10)
+        resp = _request_with_retry(requests.post, TOKEN_URL, headers=headers, json=body, timeout=10)
         data = resp.json()
 
         if resp.status_code == 200 and "access_token" in data:
@@ -110,7 +110,7 @@ def fetch_daily_price(code: str, days_back: int = 30) -> list:
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-price"
 
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        resp = _request_with_retry(requests.get, url, headers=headers, params=params, timeout=15)
         data = resp.json()
 
         if resp.status_code != 200 or data.get("rt_cd") != "0":

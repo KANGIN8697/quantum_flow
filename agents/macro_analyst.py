@@ -8,6 +8,7 @@ import json
 import asyncio
 from datetime import datetime, date
 from dotenv import load_dotenv
+import logging
 
 def safe_float(v, d=0.0):
     try:
@@ -18,6 +19,8 @@ def safe_float(v, d=0.0):
 
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ── 의존성 ────────────────────────────────────────────────
 try:
