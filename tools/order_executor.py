@@ -296,7 +296,7 @@ def cancel_order(order_no: str, code: str, qty: int, price: int) -> dict:
     ----------
     order_no : 원주문번호 (ODNO)
     code     : 종목코드
-    qty      : ��소 수량
+    qty      : 취소 수량
     price    : 원주문 단가
     """
     url = f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl"
@@ -512,15 +512,15 @@ if __name__ == "__main__":
     balance = get_balance()
     print(f"    {balance['cash']:,}원")
     for pos in balance['positions']:
-        print(f"    {pos['name']}({pos['code']}): {pos['qty']}죣�  평단 {pos['avg_price']:,}원  수익 {pos['pnl_pct']:+.2f}%")
+        print(f"    {pos['name']}({pos['code']}): {pos['qty']}주  평단 {pos['avg_price']:,}원  수익 {pos['pnl_pct']:+.2f}%")
 
     print("\n[2] 매수 IOC 테스트 (삼성전자 1주 / 실제 실행됩니다!)")
     print("    ⚠️  실제 주문이 발생합니다. 테스트 시 주의하세요.")
     # result = buy_ioc("005930", qty=1, price=70000)
     # print(f"    결과: {result}")
-    print("    (주묄 해제 후 실햩)")
+    print("    (주석 해제 후 실행)")
 
-    print("\n[3] 주문 똜덴 경로:", LOG_DIR)
+    print("\n[3] 주문 로그 경로:", LOG_DIR)
     print("\n" + "=" * 55)
     print("  ✅ order_executor.py 구조 확인 완료!")
     print("=" * 55)

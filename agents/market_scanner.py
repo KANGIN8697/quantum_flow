@@ -172,7 +172,7 @@ def _fetch_ohlcv(code: str, period: int = 25) -> object:
         return None
 
 
-# ── 3. 기술적 사전 필�0 ──────────────────────────────────────
+# ── 3. 기술적 사전 필터 ──────────────────────────────────────
 
 def apply_tech_filter(candidates: list, max_out: int = 40) -> list:
     """
@@ -392,6 +392,20 @@ async def run_scanner(round_label: str = "1차") -> list:
         print(f"  ⚠️  저장 실패: {e}")
 
     return watch_list
+
+
+# ── main.py 진입점 ─────────────────────────────────────────────
+
+async def market_scanner_run() -> dict:
+    """
+    main.py에서 호출하는 종목 스캐닝 진입점.
+    run_scanner()를 실행하고 main.py가 기대하는 형식으로 반환.
+    """
+    watch_list = await run_scanner("1차")
+    return {
+        "candidates": len(watch_list),
+        "watch_list": watch_list,
+    }
 
 
 # ── 테스트 블록 ────────────────────────────────────────────────

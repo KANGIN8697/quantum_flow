@@ -279,13 +279,28 @@ async def run_macro_analysis() -> dict:
     set_state("macro_confidence", analysis.get("confidence", 50))
     
     if risk_label == "OFF":
-        update_risk_params({"position_pct": 0.5})  # 포지션 축소
-    
+        set_state("risk_off", True)
+        update_risk_params({
+            "risk_level": "HIGH",
+            "position_pct": 0.5,
+            "pyramiding_allowed": False,
+        })
+
     if analysis.get("urgent_action") == "EXIT_ALL":
+        set_state("risk_off", True)
         set_state("force_exit", True)
+        update_risk_params({
+            "risk_level": "CRITICAL",
+            "emergency_liquidate": True,
+            "pyramiding_allowed": False,
+        })
         print("  🚨🚨 긴급 전량 청산 시그널 발생!")
     elif analysis.get("urgent_action") == "REDUCE":
-        update_risk_params({"position_pct": 0.3})
+        update_risk_params({
+            "risk_level": "HIGH",
+            "position_pct": 0.3,
+            "pyramiding_allowed": False,
+        })
         print("  ⚠ 포지션 축소 시그널 발생")
     
     # 5) 결과 조립
@@ -316,6 +331,26 @@ async def run_macro_analysis() -> dict:
     print(f"{'='*55}")
     
     return result
+
+
+# ── main.py 진입점 ────────────────────────────────────────
+
+async def macro_analyst_run() -> dict:
+    """
+    main.py에서 호출하는 거시경제 분석 진입점.
+    run_macro_analysis()를 실행하고 main.py가 기대하는 형식으로 반환.
+    """
+    result = await run_macro_analysis()
+    analysis = result.get("analysis", {})
+    return {
+        "risk_status": analysis.get("risk", "ON"),
+        "confidence": analysis.get("confidence", 50),
+        "sectors": analysis.get("sectors", []),
+        "avoid_sectors": analysis.get("avoid_sectors", []),
+        "urgent_action": analysis.get("urgent_action", "NONE"),
+        "summary": analysis.get("summary", ""),
+        "raw": result,
+    }
 
 
 # ── 테스트 블록 ──────────────────────────────────────────

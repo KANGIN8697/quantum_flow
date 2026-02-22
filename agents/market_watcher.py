@@ -235,7 +235,7 @@ class MarketWatcher:
 
             print(f"    시총상위5 하락: {drop_count}종목")
 
-            # 비율�� 환산 (5개 중 → 10개 기준 추정: 비율 유지)
+            # 비율로 환산 (5개 중 → 10개 기준 추정: 비율 유지)
             estimated_drop = int(drop_count / 5 * 10)
             if estimated_drop >= MARKET_DROP_COUNT:
                 triggered.append("MARKET_DROP")
@@ -279,7 +279,7 @@ class MarketWatcher:
             else:
                 pos_summary = "\n현재 보유 포지션: 없음"
 
-            # 뉴스 ���성텍스트 (보유 종목 첫 번째)
+            # 뉴스 생성텍스트 (보유 종목 첫 번째)
             news_ctx = ""
             if positions:
                 first_code = list(positions.keys())[0]
@@ -368,6 +368,41 @@ class MarketWatcher:
         })
 
         print("  ✅ 리스크 파라미터 HIGH 모드로 전환 완료")
+
+
+# ── main.py 진입점 ─────────────────────────────────────────────
+
+async def market_watcher_run():
+    """
+    main.py에서 호출하는 시장 감시 진입점.
+    MarketWatcher를 생성하고 asyncio executor에서 블로킹 루프를 실행.
+    KeyboardInterrupt가 발생할 때까지 장중 감시를 계속한다.
+    """
+    import asyncio
+
+    watcher = MarketWatcher(check_interval=60)
+    watcher._running = True
+    print(f"🔭 [{MODE_LABEL}] MarketWatcher 시작 (주기: {watcher.check_interval}초)")
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _watcher_blocking_loop, watcher)
+
+
+def _watcher_blocking_loop(watcher: MarketWatcher):
+    """executor 내에서 실행되는 블로킹 감시 루프"""
+    while watcher._running:
+        try:
+            watcher.check_cycle()
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"  ❌ [MarketWatcher] 주기 오류: {e}")
+            try:
+                notify_error("MarketWatcher", str(e), MODE_LABEL)
+            except Exception:
+                pass
+        time.sleep(watcher.check_interval)
+    print(f"🛑 [{MODE_LABEL}] MarketWatcher 종료")
 
 
 # ── 테스트 블록 ────────────────────────────────────────────────
