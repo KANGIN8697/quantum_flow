@@ -26,6 +26,15 @@ from config.settings import (
     ATR_PERIOD, DONCHIAN_PROXIMITY_PCT,
 )
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'): val = val.iloc[-1]
+        if hasattr(val, 'item'): return float(val.item())
+        return float(val)
+    except (TypeError, ValueError, IndexError): return default
+
+
 logger = logging.getLogger("scanner_tools")
 
 # ── 코스피 시총 상위 종목 (후보군) ──────────────────────────
@@ -99,7 +108,7 @@ def calc_rsi(close: "pd.Series", period: int = 14) -> float:
     avg_loss = loss.rolling(window=period).mean()
     rs = avg_gain / avg_loss.replace(0, float("nan"))
     rsi = 100 - (100 / (1 + rs))
-    val = float(rsi.iloc[-1])
+    val = safe_float(rsi.iloc[-1])
     return val if not pd.isna(val) else 50.0
 
 
@@ -110,9 +119,9 @@ def calc_donchian(df: "pd.DataFrame", period: int = 20) -> dict:
 
     high = df["High"].iloc[-period:]
     low = df["Low"].iloc[-period:]
-    upper = float(high.max())
-    lower = float(low.min())
-    cur = float(df["Close"].iloc[-1])
+    upper = safe_float(high.max())
+    lower = safe_float(low.min())
+    cur = safe_float(df["Close"].iloc[-1])
 
     return {
         "upper": upper,
@@ -127,10 +136,10 @@ def calc_volume_ratio(df: "pd.DataFrame", base_days: int = 20) -> float:
     """최근 1일 거래량 / 20일 평균 거래량"""
     if df is None or len(df) < base_days + 1:
         return 1.0
-    avg_vol = float(df["Volume"].iloc[-(base_days + 1):-1].mean())
+    avg_vol = safe_float(df["Volume"].iloc[-(base_days + 1):-1].mean())
     if avg_vol == 0:
         return 1.0
-    today_vol = float(df["Volume"].iloc[-1])
+    today_vol = safe_float(df["Volume"].iloc[-1])
     return round(today_vol / avg_vol, 2)
 
 
@@ -158,7 +167,7 @@ def calc_atr(df: "pd.DataFrame", period: int = None) -> float:
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     atr = tr.rolling(window=period).mean()
-    val = float(atr.iloc[-1])
+    val = safe_float(atr.iloc[-1])
     return round(val, 2) if not pd.isna(val) else 0.0
 
 
@@ -184,7 +193,7 @@ def calc_vwap(df: "pd.DataFrame", period: int = None) -> dict:
         return {"vwap": 0, "price_above_vwap": False, "deviation_pct": 0}
 
     vwap = float((tp * vol).sum() / vol_sum)
-    cur = float(df["Close"].iloc[-1])
+    cur = safe_float(df["Close"].iloc[-1])
     deviation = (cur / vwap - 1) * 100 if vwap > 0 else 0
 
     return {

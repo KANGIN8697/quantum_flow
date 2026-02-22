@@ -13,6 +13,16 @@ from datetime import datetime, date, timedelta
 from urllib.parse import quote
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'): val = val.iloc[-1]
+        if hasattr(val, 'item'): return float(val.item())
+        return float(val)
+    except (TypeError, ValueError, IndexError): return default
+
+
+
 load_dotenv()
 
 try:
@@ -143,8 +153,8 @@ def fetch_yfinance_recent() -> dict:
             if not df.empty:
                 last = df.iloc[-1]
                 prev = df.iloc[-2] if len(df) > 1 else last
-                close_val = float(last["Close"].iloc[0]) if hasattr(last["Close"], "iloc") else float(last["Close"])
-                prev_val = float(prev["Close"].iloc[0]) if hasattr(prev["Close"], "iloc") else float(prev["Close"])
+                close_val = safe_float(last["Close"].iloc[0]) if hasattr(last["Close"], "iloc") else safe_float(last["Close"])
+                prev_val = safe_float(prev["Close"].iloc[0]) if hasattr(prev["Close"], "iloc") else safe_float(prev["Close"])
                 chg = ((close_val - prev_val) / prev_val * 100) if prev_val else 0
                 results[name] = {
                     "value": round(close_val, 2),

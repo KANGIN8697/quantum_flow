@@ -15,6 +15,16 @@ import time
 import datetime as dt
 from typing import Optional
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'): val = val.iloc[-1]
+        if hasattr(val, 'item'): return float(val.item())
+        return float(val)
+    except (TypeError, ValueError, IndexError): return default
+
+
+
 try:
     import pandas as pd
 except ImportError:
@@ -148,11 +158,11 @@ def calc_momentum(df: "pd.DataFrame") -> dict:
         return {"score": 0, "detail": "데이터 부족"}
 
     close = df["Close"]
-    cur = float(close.iloc[-1])
+    cur = safe_float(close.iloc[-1])
 
-    ret_5d = (cur / float(close.iloc[-6]) - 1) * 100 if len(df) >= 6 else 0
-    ret_20d = (cur / float(close.iloc[-21]) - 1) * 100 if len(df) >= 21 else 0
-    ret_60d = (cur / float(close.iloc[-61]) - 1) * 100 if len(df) >= 61 else 0
+    ret_5d = (cur / safe_float(close.iloc[-6]) - 1) * 100 if len(df) >= 6 else 0
+    ret_20d = (cur / safe_float(close.iloc[-21]) - 1) * 100 if len(df) >= 21 else 0
+    ret_60d = (cur / safe_float(close.iloc[-61]) - 1) * 100 if len(df) >= 61 else 0
 
     score = 0
     # 5인 수익률
@@ -206,15 +216,15 @@ def calc_volume_surge(df: "pd.DataFrame") -> dict:
         return {"score": 0, "detail": "데이터 부족"}
 
     vol = df["Volume"]
-    avg_20 = float(vol.iloc[-21:-1].mean())
+    avg_20 = safe_float(vol.iloc[-21:-1].mean())
     if avg_20 == 0:
         return {"score": 0, "ratio": 0}
 
-    recent_vol = float(vol.iloc[-1])
+    recent_vol = safe_float(vol.iloc[-1])
     ratio = recent_vol / avg_20
 
     # 최근 5일 평균도 확인 (지속적 거래량 증가)
-    avg_5 = float(vol.iloc[-5:].mean())
+    avg_5 = safe_float(vol.iloc[-5:].mean())
     ratio_5d = avg_5 / avg_20
 
     score = 0
@@ -249,11 +259,11 @@ def calc_ma_alignment(df: "pd.DataFrame") -> dict:
         return {"score": 0, "detail": "데이터 부족"}
 
     close = df["Close"]
-    ma5 = float(close.iloc[-5:].mean())
-    ma20 = float(close.iloc[-20:].mean())
-    ma60 = float(close.iloc[-60:].mean())
-    ma120 = float(close.iloc[-120:].mean())
-    cur = float(close.iloc[-1])
+    ma5 = safe_float(close.iloc[-5:].mean())
+    ma20 = safe_float(close.iloc[-20:].mean())
+    ma60 = safe_float(close.iloc[-60:].mean())
+    ma120 = safe_float(close.iloc[-120:].mean())
+    cur = safe_float(close.iloc[-1])
 
     score = 0
     aligned = []
@@ -310,8 +320,8 @@ def calc_relative_strength(df: "pd.DataFrame", code: str) -> dict:
         return {"score": 0, "detail": "코스피 데이터 없음"}
 
     # 20인 수익률 비교
-    stock_ret = float(df["Close"].iloc[-1]) / float(df["Close"].iloc[-21]) - 1
-    kospi_ret = float(kospi_df["Close"].iloc[-1]) / float(kospi_df["Close"].iloc[-21]) - 1
+    stock_ret = safe_float(df["Close"].iloc[-1]) / safe_float(df["Close"].iloc[-21]) - 1
+    kospi_ret = safe_float(kospi_df["Close"].iloc[-1]) / safe_float(kospi_df["Close"].iloc[-21]) - 1
 
     rs = (stock_ret - kospi_ret) * 100  # 상대강도 (%)
 
@@ -344,9 +354,9 @@ def calc_52w_high_proximity(df: "pd.DataFrame") -> dict:
         return {"score": 0, "detail": "데이터 부족"}
 
     close = df["Close"]
-    high_52w = float(df["High"].max())
-    low_52w = float(df["Low"].min())
-    cur = float(close.iloc[-1])
+    high_52w = safe_float(df["High"].max())
+    low_52w = safe_float(df["Low"].min())
+    cur = safe_float(close.iloc[-1])
 
     if high_52w == low_52w:
         return {"score": 0, "pct": 0}
@@ -516,7 +526,7 @@ def calc_sector_momentum(code: str) -> dict:
         return {"score": 0, "sector": sector, "detail": "데이터 부족"}
 
     close = df["Close"]
-    ret_20d = (float(close.iloc[-1]) / float(close.iloc[-21]) - 1) * 100
+    ret_20d = (safe_float(close.iloc[-1]) / safe_float(close.iloc[-21]) - 1) * 100
 
     score = 0
     if ret_20d > 8:
