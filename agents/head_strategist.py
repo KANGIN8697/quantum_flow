@@ -16,6 +16,7 @@ from config.settings import (
 )
 
 from tools.trade_logger import log_trade, log_signal, log_risk_event
+from tools.notifier_tools import notify_trade_decision
 
 logger = logging.getLogger("head_strategist")
 
@@ -145,6 +146,17 @@ class HeadStrategist:
                 actions_taken.append(action)
                 print(f"    ð ë§¤ì ê²°ì : {code} ({final_pct:.1%})")
 
+                # 텔레그램 매매 알림
+                try:
+                    notify_trade_decision(
+                        "BUY", code, final_pct,
+                        info.get("eval_grade", "?"), strategy,
+                        action["reason"],
+                    )
+                except Exception:
+                    pass
+
+
                 # ë§ ë§¤ ê¸°ë¡ ì ì¥
                 log_trade("BUY", code,
                           position_pct=round(final_pct, 3),
@@ -212,6 +224,15 @@ class HeadStrategist:
                       position_pct=positions[code].get("entry_pct", 0))
             remove_position(code)
             add_to_blacklist(code)
+
+            try:
+                notify_trade_decision(
+                    "FORCE_CLOSE", code,
+                    positions[code].get("entry_pct", 0), "?",
+                    "긴급청산", "긴급 전량 청산 (CRITICAL)",
+                )
+            except Exception:
+                pass
             print(f"    ð¨ ê¸´ê¸ ì²­ì°: {code}")
         return actions
 

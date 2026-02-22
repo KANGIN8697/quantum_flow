@@ -17,7 +17,10 @@ import sys
 load_dotenv()
 
 from tools.trade_logger import (
-    set_macro_snapshot, log_risk_event, end_of_day_routine
+    set_macro_snapshot, log_risk_event, end_of_day_routine, get_daily_trades
+)
+from tools.dashboard_tools import (
+    create_and_send_daily_dashboard, create_and_send_weekly_dashboard
 )
 
 # ë¡ê¹ ì¤ì 
@@ -179,6 +182,17 @@ async def main():
         print(f"  ð ë§¤ë§¤ {perf.get('total_trades', 0)}ê±´ | "
               f"ì¹ë¥  {perf.get('win_rate', 0):.0%} | "
               f"ì¤íPnL {perf.get('realized_pnl', 0):+.2%}")
+
+        # 일별 대시보드 이미지 생성 및 텔레그램 전송
+        trades = get_daily_trades()
+        create_and_send_daily_dashboard(perf, trades, positions)
+
+        # 금요일이면 주별 대시보드도 전송
+        from datetime import datetime as _dt
+        if _dt.now().weekday() == 4:  # 금요일
+            create_and_send_weekly_dashboard()
+
+
     except Exception as e:
         logger.error(f"ì¼ì¼ ë¦¬í¬í¸ ìì± ì¤í¨: {e}")
 
