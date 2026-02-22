@@ -11,20 +11,9 @@ from datetime import datetime
 import websockets
 from dotenv import load_dotenv
 import logging
+from tools.utils import safe_float
 
 logger = logging.getLogger(__name__)
-
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'):
-            val = val.iloc[-1]
-        if hasattr(val, 'item'):
-            return safe_float(val.item())
-        return safe_float(val)
-    except (TypeError, ValueError, IndexError):
-        return default
-
 
 load_dotenv()
 

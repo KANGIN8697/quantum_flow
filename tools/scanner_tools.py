@@ -25,15 +25,7 @@ from config.settings import (
     ADX_PERIOD, ADX_THRESHOLD, VWAP_LOOKBACK,
     ATR_PERIOD, DONCHIAN_PROXIMITY_PCT,
 )
-
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'): val = val.iloc[-1]
-        if hasattr(val, 'item'): return float(val.item())
-        return float(val)
-    except (TypeError, ValueError, IndexError): return default
-
+from tools.utils import safe_float
 
 logger = logging.getLogger("scanner_tools")
 

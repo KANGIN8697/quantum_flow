@@ -9,14 +9,7 @@ import asyncio
 from datetime import datetime, date
 from dotenv import load_dotenv
 import logging
-
-def safe_float(v, d=0.0):
-    try:
-        if hasattr(v,"iloc"): return safe_float(v.iloc[-1])
-        if hasattr(v,"item"): return safe_float(v.item())
-        return safe_float(v)
-    except Exception: return d
-
+from tools.utils import safe_float
 
 load_dotenv()
 

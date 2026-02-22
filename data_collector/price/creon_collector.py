@@ -304,34 +304,5 @@ def _notify_completion(total_rows: int, elapsed: float):
 
 if __name__ == "__main__":
     import argparse
+from tools.utils import safe_float
 
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'):
-            val = val.iloc[-1]
-        if hasattr(val, 'item'):
-            return safe_float(val.item())
-        return safe_float(val)
-    except (TypeError, ValueError, IndexError):
-        return default
-
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(name)s] %(message)s")
-
-    parser = argparse.ArgumentParser(description="Creon 분봉 데이터 수집")
-    parser.add_argument("--ticker", type=str, help="특정 종목코드만 수집")
-    parser.add_argument("--timeframe", type=int, choices=[5, 15, 60],
-                        help="특정 타임프레임만 수집")
-    args = parser.parse_args()
-
-    timeframes = [args.timeframe] if args.timeframe else None
-    tickers = [args.ticker] if args.ticker else None
-
-    if not _CREON_AVAILABLE:
-        print("=" * 55)
-        print("  [경고] Windows 32bit + Creon HTS 환경에서만 실행 가능")
-        print("  현재 환경에서는 코드 구조만 확인됩니다.")
-        print("=" * 55)
-    else:
-        collect_all(timeframes=timeframes, tickers=tickers)

@@ -8,14 +8,7 @@ import threading
 from datetime import datetime
 from dotenv import load_dotenv
 import logging
-
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'): val = val.iloc[-1]
-        if hasattr(val, 'item'): return float(val.item())
-        return float(val)
-    except (TypeError, ValueError, IndexError): return default
+from tools.utils import safe_float
 
 def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
     """yfinance download with retry logic"""

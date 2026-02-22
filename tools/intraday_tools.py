@@ -209,73 +209,7 @@ def analyze_60m_trend(code: str) -> dict:
         }
     """
     from config.settings import INTRADAY_60M_BARS
-
-def safe_int(val, default=0):
-    """int() 안전 래퍼 - pandas Series, NaN, 빈 문자열 등 처리"""
-    try:
-        if hasattr(val, 'iloc'):
-            val = val.iloc[0] if len(val) > 0 else default
-        if val is None or val == '':
-            return default
-        import math
-        if isinstance(val, float) and math.isnan(val):
-            return default
-        return int(float(val))
-    except (ValueError, TypeError, IndexError):
-        return default
-
-
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'):
-            val = val.iloc[-1]
-        if hasattr(val, 'item'):
-            return safe_float(val.item())
-        return safe_float(val)
-    except (TypeError, ValueError, IndexError):
-        return default
-
-
-    candles = fetch_intraday_candles(code, interval_minutes=60, count=INTRADAY_60M_BARS)
-
-    if not candles or len(candles) < 3:
-        return {
-            "trend": "NEUTRAL",
-            "score": 0,
-            "detail": "60분봉 데이터 부족",
-        }
-
-    # 종가 추출 (최신→과거)
-    closes = [c["close"] for c in candles]
-
-    # 단순 추세: 연속 상승/하락 봉 수
-    ascending = 0
-    descending = 0
-    for i in range(len(closes) - 1):
-        if closes[i] > closes[i + 1]:  # 최신이 이전보다 높음
-            ascending += 1
-        elif closes[i] < closes[i + 1]:
-            descending += 1
-
-    if ascending >= 3:
-        trend = "UP"
-        score = 1
-    elif descending >= 3:
-        trend = "DOWN"
-        score = -1
-    else:
-        trend = "NEUTRAL"
-        score = 0
-
-    return {
-        "trend": trend,
-        "score": score,
-        "ascending_count": ascending,
-        "descending_count": descending,
-        "detail": f"60분봉 추세: {trend} (상승={ascending}, 하락={descending})",
-    }
-
+from tools.utils import safe_float, safe_int
 
 # ═══════════════════════════════════════════════════════
 #  통합 분봉 분섭 (stock_eval에서 호출)

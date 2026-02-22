@@ -13,18 +13,9 @@ from datetime import datetime, date, timedelta
 from urllib.parse import quote
 from dotenv import load_dotenv
 import logging
+from tools.utils import safe_float
 
 logger = logging.getLogger(__name__)
-
-def safe_float(val, default=0.0):
-    """pandas Series/numpy -> float safely"""
-    try:
-        if hasattr(val, 'iloc'): val = val.iloc[-1]
-        if hasattr(val, 'item'): return float(val.item())
-        return float(val)
-    except (TypeError, ValueError, IndexError): return default
-
-
 
 load_dotenv()
 
