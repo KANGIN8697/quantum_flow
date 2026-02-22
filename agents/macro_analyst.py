@@ -51,10 +51,32 @@ SYSTEM_PROMPT = """당신은 한국 주식시장 전문 거시경제 분석가�
   "confidence": 0~100 (판단 확신도),
   "sectors": ["추천섹터1", "추천섹터2"],
   "avoid_sectors": ["회피섹터1"],
+  "sector_multipliers": {
+    "반도체": 1.0,
+    "2차전지": 1.0,
+    "바이오": 1.0,
+    "자동차": 1.0,
+    "금융": 1.0,
+    "철강": 1.0,
+    "IT": 1.0,
+    "화학": 1.0,
+    "건설": 1.0,
+    "에너지": 1.0
+  },
   "report": "3페이지 분량의 상세 보고서 (마크다운 형식)",
   "summary": "3줄 요약",
   "urgent_action": "NONE" 또는 "REDUCE" 또는 "EXIT_ALL"
 }
+
+sector_multipliers 작성 규칙:
+- 각 섹터의 가중치를 0.5 ~ 1.5 범위에서 결정하세요.
+- 기본값은 1.0이며, 거시경제 상황에 따라 조정합니다.
+- 기본 규칙 (USD/KRW 기반):
+  * USD/KRW >= 1400원: 수출주(반도체,자동차,IT) 1.2, 내수주(건설,금융) 0.8
+  * USD/KRW >= 1350원: 수출주 1.1, 내수주 0.9
+  * USD/KRW <= 1250원: 수출주 0.9, 내수주 1.1
+- 위 기본 규칙에서 ±0.1 범위로 미세조정할 수 있습니다.
+- 글로벌 유가 급등 시 에너지/화학 상향, 바이오는 거시에 덜 민감하므로 1.0 유지.
 
 보고서(report)는 반드시 다음 구조를 따르세요:
 
@@ -178,6 +200,36 @@ async def analyze_with_gpt(macro_data: dict, news_list: list, urgent_info: dict)
         return _default_analysis(reason)
 
 
+def _validate_sector_multipliers(raw: dict) -> dict:
+    """
+    [기능6] LLM이 생성한 섹터 멀티플라이어를 검증하고 클리핑.
+    - dict가 아니면 빈 dict 반환
+    - 값이 0.5~1.5 범위를 벗어나면 클리핑
+    - 숫자가 아닌 값은 기본값 1.0으로 대체
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    try:
+        from config.settings import (
+            SECTOR_MULTIPLIER_MIN, SECTOR_MULTIPLIER_MAX, SECTOR_MULTIPLIER_DEFAULT,
+        )
+    except ImportError:
+        SECTOR_MULTIPLIER_MIN = 0.5
+        SECTOR_MULTIPLIER_MAX = 1.5
+        SECTOR_MULTIPLIER_DEFAULT = 1.0
+
+    validated = {}
+    for sector, mult in raw.items():
+        try:
+            val = float(mult)
+            val = max(SECTOR_MULTIPLIER_MIN, min(val, SECTOR_MULTIPLIER_MAX))
+            validated[sector] = round(val, 2)
+        except (ValueError, TypeError):
+            validated[sector] = SECTOR_MULTIPLIER_DEFAULT
+    return validated
+
+
 def _default_analysis(reason: str) -> dict:
     """기본 분석 결과 (폴백)"""
     return {
@@ -277,6 +329,15 @@ async def run_macro_analysis() -> dict:
     set_state("macro_sectors", analysis.get("sectors", []))
     set_state("macro_urgent", analysis.get("urgent_action", "NONE"))
     set_state("macro_confidence", analysis.get("confidence", 50))
+
+    # [기능6] 섹터 멀티플라이어 저장 (검증 + 클리핑)
+    raw_multipliers = analysis.get("sector_multipliers", {})
+    validated_multipliers = _validate_sector_multipliers(raw_multipliers)
+    set_state("sector_multipliers", validated_multipliers)
+    if validated_multipliers:
+        non_default = {k: v for k, v in validated_multipliers.items() if v != 1.0}
+        if non_default:
+            print(f"  📊 섹터 멀티플라이어: {non_default}")
     
     if risk_label == "OFF":
         set_state("risk_off", True)

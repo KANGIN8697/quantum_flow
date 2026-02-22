@@ -5,9 +5,13 @@ import os
 import time
 import threading
 import requests
-import yfinance as yf
 from datetime import datetime
 from dotenv import load_dotenv
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 
 load_dotenv()
 
@@ -18,6 +22,7 @@ try:
         MARKET_DROP_COUNT, RISK_OFF_TRIGGER_MIN, RISK_OFF_CONFIRM_WAIT,
         NEWS_CHECK_INTERVAL,
         INITIAL_STOP_ATR, TRAILING_STOP_ATR,
+        RECOVERY_MIN_WAIT, RECOVERY_MAX_REENTRY, RECOVERY_POSITION_RATIO,
     )
     from shared_state import get_state, set_state, update_risk_params, get_positions
     from tools.notifier_tools import notify_risk_off, notify_error
@@ -33,6 +38,9 @@ except ImportError:
     NEWS_CHECK_INTERVAL    = 20
     INITIAL_STOP_ATR       = 2.0
     TRAILING_STOP_ATR      = 3.0
+    RECOVERY_MIN_WAIT      = 1800
+    RECOVERY_MAX_REENTRY   = 1
+    RECOVERY_POSITION_RATIO = 0.6
 
     def get_state(k): return None
     def set_state(k, v): pass
@@ -126,8 +134,38 @@ class MarketWatcher:
         now = datetime.now().strftime("%H:%M:%S")
         print(f"\n  🔭 [{MODE_LABEL}] 시장 감시 주기 시작 ({now})")
 
-        # Risk-Off 이미 선언된 경우 스킵
+        # [기능3] Risk-Off 상태에서 Recovery Watch 체크
         if get_state("risk_off"):
+            recovery_state = get_state("recovery_state") or "NONE"
+            reentry_count = get_state("reentry_count") or 0
+
+            if reentry_count >= RECOVERY_MAX_REENTRY:
+                print("  ℹ️  Risk-Off 유지 (최대 재진입 횟수 도달)")
+                return
+
+            # Recovery Watch 상태머신
+            if recovery_state == "NONE":
+                # Risk-Off 후 최소 대기 시간 경과 확인
+                risk_off_time_str = get_state("risk_off_time")
+                if risk_off_time_str:
+                    try:
+                        risk_off_dt = datetime.fromisoformat(risk_off_time_str)
+                        elapsed = (datetime.now() - risk_off_dt).total_seconds()
+                        if elapsed >= RECOVERY_MIN_WAIT:
+                            set_state("recovery_state", "WATCHING")
+                            print(f"  🔍 Recovery Watch 시작 ({elapsed/60:.0f}분 경과)")
+                        else:
+                            remaining = (RECOVERY_MIN_WAIT - elapsed) / 60
+                            print(f"  ℹ️  Risk-Off 대기 중 (잔여 {remaining:.0f}분)")
+                    except (ValueError, TypeError):
+                        pass
+                return
+
+            elif recovery_state == "WATCHING":
+                self._check_recovery()
+                return
+
+            # RECOVERED 상태면 이미 해제됨 → 아래 정상 루프로 진행
             print("  ℹ️  Risk-Off 상태 유지 중 — 추가 점검 스킵")
             return
 
@@ -335,6 +373,8 @@ class MarketWatcher:
         print(f"\n  🚨 [{MODE_LABEL}] ⚡ RISK-OFF 선언! 트리거: {triggered}")
 
         set_state("risk_off", True)
+        set_state("risk_off_time", datetime.now().isoformat())
+        set_state("recovery_state", "NONE")
         update_risk_params({
             "risk_level":          "CRITICAL",
             "stop_loss_multiplier": 1.5,
@@ -368,6 +408,109 @@ class MarketWatcher:
         })
 
         print("  ✅ 리스크 파라미터 HIGH 모드로 전환 완료")
+
+    # ── 6. [기능3] Recovery Watch (V자 반등 재진입) ─────────
+
+    def _check_recovery(self):
+        """
+        Risk-Off 상태에서 정량 트리거 해소 여부를 확인하고,
+        해소 시 LLM에 재검증하여 매매를 재개한다.
+        """
+        print("  🔍 Recovery Watch: 정량 트리거 해소 확인 중...")
+
+        triggered, _ = self.check_quantitative_triggers()
+
+        if len(triggered) >= RISK_OFF_TRIGGER_MIN:
+            print(f"  ⚠️  트리거 {len(triggered)}개 유지 — Recovery 불가")
+            return
+
+        print(f"  ✅ 트리거 해소 ({len(triggered)}개) — LLM 안정화 검증 진행...")
+
+        # LLM에 "시장 안정화" 재질의
+        llm_stable = self._check_llm_recovery()
+
+        if llm_stable:
+            self._execute_recovery()
+        else:
+            print("  ⚠️  LLM 판단: 아직 불안정 — Recovery Watch 유지")
+
+    def _check_llm_recovery(self) -> bool:
+        """
+        LLM에게 '시장이 안정화되었는가?' 재질의.
+        """
+        if not OPENAI_API_KEY:
+            print("  ⚠️  [LLM] OPENAI_API_KEY 없음 — 정량 기준만 사용")
+            return True
+
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+
+            risk_off_time = get_state("risk_off_time") or "불명"
+
+            prompt = f"""당신은 한국 주식 시장 Risk 관리 전문가입니다.
+현재 시각: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Risk-Off 선언 시각: {risk_off_time}
+
+아까 Risk-Off를 선언했으나, 현재 정량 지표(VIX, KOSPI, 환율, 대형주)가
+모두 정상 범위로 회복되었습니다.
+
+시장이 충분히 안정화되어 보수적 매매 재개가 가능한지 판단해주세요.
+
+판단 기준:
+- YES: 시장이 안정화되어 보수적 재진입 가능
+- NO: 아직 불확실하므로 Risk-Off 유지 권장
+
+반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하세요."""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                temperature=0.1,
+            )
+
+            answer = response.choices[0].message.content.strip()
+            first_line = answer.split("\n")[0].strip().upper()
+            stable = first_line.startswith("YES")
+
+            print(f"  🤖 [LLM Recovery] 답변: {answer[:100]}")
+            print(f"  🤖 [LLM Recovery] 판단: {'안정화 확인' if stable else '불안정 유지'}")
+
+            return stable
+
+        except Exception as e:
+            print(f"  ⚠️  [LLM] Recovery 검증 오류: {e} — 보수적으로 대기 유지")
+            return False
+
+    def _execute_recovery(self):
+        """
+        Recovery 실행: Risk-Off 해제 + 보수적 파라미터로 매매 재개.
+        """
+        reentry_count = (get_state("reentry_count") or 0) + 1
+
+        set_state("risk_off", False)
+        set_state("recovery_state", "RECOVERED")
+        set_state("reentry_count", reentry_count)
+
+        update_risk_params({
+            "risk_level": "HIGH",
+            "stop_loss_multiplier": 1.5,
+            "pyramiding_allowed": False,
+            "emergency_liquidate": False,
+            "position_pct": RECOVERY_POSITION_RATIO,
+        })
+
+        print(f"\n  🟢 [{MODE_LABEL}] Recovery 완료! 매매 재개 ({reentry_count}회차)")
+        print(f"     포지션 비율: {RECOVERY_POSITION_RATIO*100:.0f}% (보수적)")
+        print(f"     피라미딩: 비활성")
+
+        try:
+            notify_error("MarketWatcher.Recovery",
+                         f"Risk-Off 해제, 보수적 매매 재개 ({reentry_count}회차)",
+                         MODE_LABEL)
+        except Exception:
+            pass
 
 
 # ── main.py 진입점 ─────────────────────────────────────────────

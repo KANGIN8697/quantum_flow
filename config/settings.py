@@ -14,17 +14,26 @@ POSITION_SIZE_RATIO = 0.20    # 종목당 초기 투입 비율
 PYRAMID_ADD_RATIO = 0.30      # 추가매수 비율 (초기 대비)
 DAILY_LOSS_LIMIT = -0.03      # 당일 최대 손실 한도
 
-# 추가매수 조건
-PYRAMID_PRICE_TRIGGER = 0.05  # 평단 대비 +5% 상승 시
+# 추가매수 조건 (기능4: 동적 피라미딩)
+PYRAMID_PRICE_TRIGGER = 0.05  # 고정 % 폴백 (ATR 불가 시)
+PYRAMID_ATR_MULTIPLIER = 1.5  # 동적 피라미딩: 진입가 + (1.5 × ATR) 이상일 때
+PYRAMID_MIN_TRIGGER_PCT = 0.02  # ATR 기반 최소 트리거 (2%) — 횡보주 보호
 PYRAMID_VOLUME_RATIO = 0.50   # 초기 진입 거래량의 50%
 PYRAMID_TICK_RATIO = 0.40     # 초기 진입 틱 속도의 40%
 PYRAMID_VOLUME_TREND_MIN = 5  # 거래량 추세 확인 분 단위
+PYRAMID_MAX_COUNT = 2         # 최대 피라미딩 횟수
 
-# 손절 / 트레일링
+# 손절 / 트레일링 (기능5: 타임 디케이 손절)
 ATR_PERIOD = 14
-INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR
+INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR (Day 1)
 TRAILING_STOP_ATR = 3.0       # 트레일링: -3 x ATR
 PYRAMID_STOP_PCT = -0.03      # 추가매수 후 손절: 평단 -3%
+# 타임 디케이 ATR 배수 (일차별)
+TIME_DECAY_ATR = {
+    1: 2.0,    # Day 1: 진입가 - 2.0×ATR
+    2: 1.0,    # Day 2: 진입가 - 1.0×ATR
+    3: -0.3,   # Day 3: 진입가 + 0.3×ATR (본전+버퍼)
+}
 
 # 오버나이트
 OVERNIGHT_THRESHOLD = 0.07    # +7% 이상 시 오버나이트 트랙 전환
@@ -44,6 +53,28 @@ FX_CHANGE_THRESHOLD = 15      # 달러/원 ±15원
 MARKET_DROP_COUNT = 7         # 시총 상위 10종목 중 하락 종목 수
 RISK_OFF_TRIGGER_MIN = 2      # 4개 트리거 중 최소 충족 수
 RISK_OFF_CONFIRM_WAIT = 60    # Risk-Off 선언 전 유예 시간 (초)
+
+# 기능3: V자 반등 Re-entry
+RECOVERY_MIN_WAIT = 1800      # Risk-Off 후 최소 대기 시간 (초, 30분)
+RECOVERY_MAX_REENTRY = 1      # 하루 최대 재진입 횟수
+RECOVERY_POSITION_RATIO = 0.6 # 재진입 시 포지션 비율 (정상의 60%)
+
+# 기능1: Micro-TWAP 분할 매수
+TWAP_VOLUME_THRESHOLD = 0.001 # 일평균 거래량 대비 주문비율 임계치 (0.1%)
+TWAP_MAX_SPLITS = 4           # 최대 분할 횟수
+TWAP_INTERVAL_SEC = 45        # 분할 간 대기 시간 (초)
+TWAP_TICK_SPEED_MIN = 5       # 분할 진행 최소 틱 속도 (건/초)
+
+# 기능2: 섹터 Momentum Delta
+SECTOR_DELTA_BONUS_MAX = 6    # Delta 최대 가산점
+SECTOR_DELTA_BONUS_MIN = 2    # Delta 최소 가산점
+SECTOR_MORNING_TIME = "09:20" # 오전 기준 시각 (개장 안정 후)
+SECTOR_MIDDAY_TIME = "11:30"  # 오후 비교 시각
+
+# 기능6: 섹터 멀티플라이어 범위
+SECTOR_MULTIPLIER_MIN = 0.5   # 멀티플라이어 최소값
+SECTOR_MULTIPLIER_MAX = 1.5   # 멀티플라이어 최대값
+SECTOR_MULTIPLIER_DEFAULT = 1.0  # 기본값
 
 # 감시 풀
 MAX_WATCH_STOCKS = 30         # 최대 감시 종목 수

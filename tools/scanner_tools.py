@@ -12,6 +12,8 @@ try:
         INITIAL_STOP_ATR, TRAILING_STOP_ATR, PYRAMID_STOP_PCT,
         OVERNIGHT_THRESHOLD, PYRAMID_PRICE_TRIGGER, PYRAMID_VOLUME_RATIO,
         PYRAMID_TICK_RATIO, PYRAMID_VOLUME_TREND_MIN,
+        PYRAMID_ATR_MULTIPLIER, PYRAMID_MIN_TRIGGER_PCT, PYRAMID_MAX_COUNT,
+        TIME_DECAY_ATR,
     )
 except ImportError:
     DONCHIAN_PERIOD=20; VOLUME_SURGE_RATIO=2.0; TICK_SPEED_MIN=5
@@ -19,6 +21,8 @@ except ImportError:
     INITIAL_STOP_ATR=2.0; TRAILING_STOP_ATR=3.0; PYRAMID_STOP_PCT=-0.03
     OVERNIGHT_THRESHOLD=0.07; PYRAMID_PRICE_TRIGGER=0.05
     PYRAMID_VOLUME_RATIO=0.50; PYRAMID_TICK_RATIO=0.40; PYRAMID_VOLUME_TREND_MIN=5
+    PYRAMID_ATR_MULTIPLIER=1.5; PYRAMID_MIN_TRIGGER_PCT=0.02; PYRAMID_MAX_COUNT=2
+    TIME_DECAY_ATR={1: 2.0, 2: 1.0, 3: -0.3}
 
 
 def calc_atr(df, period=ATR_PERIOD):
@@ -115,33 +119,144 @@ def check_buy_signal(code, current_price, volume_today, volume_yesterday_same_ti
 
 def check_pyramid_signal(code, entry_price, avg_price, current_price,
     entry_volume, current_volume, entry_tick_speed, current_tick_speed,
-    df_recent, pyramiding_done=False, no_pyramid_after="15:00"):
-    """추가매수(피라미딩) 조건 5가지 모두 충족 시 True 반환."""
+    df_recent, pyramid_count=0, no_pyramid_after="15:00",
+    entry_atr=None):
+    """
+    추가매수(피라미딩) 조건 판단.
+    [기능4] ATR 기반 동적 피라미딩:
+      현재가 > 평단 + max(1.5 × ATR, 평단 × 2%) 이면 가격 조건 충족.
+      entry_atr: 진입 시 스냅샷한 ATR 값 (없으면 고정 % 폴백).
+    """
     from datetime import datetime
-    if pyramiding_done: return False
-    if datetime.now().strftime("%H:%M")>=no_pyramid_after: return False
-    if current_price<avg_price*(1+PYRAMID_PRICE_TRIGGER): return False
-    if entry_volume>0 and current_volume<entry_volume*PYRAMID_VOLUME_RATIO: return False
-    if entry_tick_speed>0 and current_tick_speed<entry_tick_speed*PYRAMID_TICK_RATIO: return False
+
+    # [1] 최대 피라미딩 횟수 초과
+    if pyramid_count >= PYRAMID_MAX_COUNT:
+        return False
+    # [2] 시간 제한
+    if datetime.now().strftime("%H:%M") >= no_pyramid_after:
+        return False
+    # [3] 가격 조건 — ATR 기반 동적 or 고정 % 폴백
+    if entry_atr and entry_atr > 0:
+        atr_target = avg_price + entry_atr * PYRAMID_ATR_MULTIPLIER
+        min_target = avg_price * (1 + PYRAMID_MIN_TRIGGER_PCT)
+        target_price = max(atr_target, min_target)
+    else:
+        target_price = avg_price * (1 + PYRAMID_PRICE_TRIGGER)
+    if current_price < target_price:
+        return False
+    # [4] 거래량 조건
+    if entry_volume > 0 and current_volume < entry_volume * PYRAMID_VOLUME_RATIO:
+        return False
+    # [5] 틱 속도 조건
+    if entry_tick_speed > 0 and current_tick_speed < entry_tick_speed * PYRAMID_TICK_RATIO:
+        return False
     return True
+
+
+def calc_pyramid_add_ratio(entry_atr, avg_price):
+    """
+    [기능4] 피라미딩 추가 수량 비율을 ATR에 반비례로 결정.
+    변동성 큰 종목 → 적게, 안정적 종목 → 많이.
+    반환: 0.15 ~ 0.40 범위의 추가 비율.
+    """
+    if not entry_atr or entry_atr <= 0 or avg_price <= 0:
+        return 0.30  # 기본값
+    volatility_pct = entry_atr / avg_price
+    if volatility_pct >= 0.04:    # 고변동성 (4%+)
+        return 0.15
+    elif volatility_pct >= 0.025:  # 중변동성
+        return 0.25
+    else:                          # 저변동성
+        return 0.40
 
 
 def calc_stop_loss(entry_price, atr):
     """초기 손절가: 진입가 - ATR x INITIAL_STOP_ATR"""
-    return round(entry_price - atr*INITIAL_STOP_ATR, 0)
+    return round(entry_price - atr * INITIAL_STOP_ATR, 0)
+
 
 def calc_trailing_stop(high_price, atr):
     """트레일링 손절가: 최고가 - ATR x TRAILING_STOP_ATR"""
-    return round(high_price - atr*TRAILING_STOP_ATR, 0)
+    return round(high_price - atr * TRAILING_STOP_ATR, 0)
+
+
+def calc_time_decay_stop(entry_price, atr, holding_days):
+    """
+    [기능5] 타임 디케이 손절가.
+    일차별 ATR 배수가 줄어들며, Day 3+에서는 진입가 + 버퍼 이상.
+    holding_days: 보유 일수 (1부터 시작, 장 마감 기준 카운트).
+    """
+    if holding_days <= 0:
+        holding_days = 1
+    # 설정된 일차별 배수 가져오기 (Day 3 이후는 Day 3 값 유지)
+    max_day = max(TIME_DECAY_ATR.keys())
+    day_key = min(holding_days, max_day)
+    atm = TIME_DECAY_ATR.get(day_key, TIME_DECAY_ATR[max_day])
+    return round(entry_price - atr * atm, 0)
+
+
+def calc_effective_stop(entry_price, high_price, atr, holding_days):
+    """
+    [기능5] 실효 손절가 = MAX(타임디케이 손절, 트레일링 손절).
+    두 기준 중 더 높은 값(더 보수적)을 적용.
+    """
+    td_stop = calc_time_decay_stop(entry_price, atr, holding_days)
+    tr_stop = calc_trailing_stop(high_price, atr)
+    return max(td_stop, tr_stop)
+
+
+def calc_holding_days(entry_time_str):
+    """
+    진입 시각으로부터 보유 일수 계산 (장 마감 15:30 기준).
+    15:30 이전 진입 → 당일을 Day 1로 카운트.
+    15:30 이후 진입 → 익일을 Day 1로 카운트.
+    """
+    try:
+        entry_dt = datetime.fromisoformat(entry_time_str)
+    except (ValueError, TypeError):
+        return 1
+
+    now = datetime.now()
+    # 장 마감 시각(15:30) 기준으로 날짜 보정
+    market_close_hour = 15
+    market_close_min = 30
+
+    # 진입일 기준일 결정
+    if entry_dt.hour > market_close_hour or (entry_dt.hour == market_close_hour and entry_dt.minute >= market_close_min):
+        entry_base = entry_dt.date()  # 진입일은 카운트 안 함
+    else:
+        entry_base = entry_dt.date()
+
+    # 현재 기준일 결정
+    current_base = now.date()
+
+    # 영업일 차이 (주말 제외 간이 계산)
+    delta = (current_base - entry_base).days
+    if delta <= 0:
+        return 1
+    # 주말 제외 (간이): 총 일수에서 주말 수 빼기
+    weeks = delta // 7
+    remainder = delta % 7
+    weekday_start = entry_base.weekday()
+    weekend_days = weeks * 2
+    for i in range(1, remainder + 1):
+        d = (weekday_start + i) % 7
+        if d >= 5:  # 토(5), 일(6)
+            weekend_days += 1
+    biz_days = delta - weekend_days
+    return max(biz_days, 1)
+
 
 def calc_pyramid_stop(avg_price):
     """추가매수 후 손절가: 평단 x (1 + PYRAMID_STOP_PCT)"""
-    return round(avg_price*(1+PYRAMID_STOP_PCT), 0)
+    return round(avg_price * (1 + PYRAMID_STOP_PCT), 0)
+
 
 def is_overnight_candidate(entry_price, current_price):
     """수익률 >= OVERNIGHT_THRESHOLD 이면 오버나이트 트랙으로 전환."""
-    if entry_price<=0: return False
-    return (current_price-entry_price)/entry_price >= OVERNIGHT_THRESHOLD
+    if entry_price <= 0:
+        return False
+    return (current_price - entry_price) / entry_price >= OVERNIGHT_THRESHOLD
 
 
 if __name__ == "__main__":

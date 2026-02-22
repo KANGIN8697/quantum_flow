@@ -17,6 +17,18 @@ shared_state = {
         "emergency_liquidate": False,
     },
     "blacklist": [],             # 당일 매매 금지 종목
+
+    # 기능3: V자 반등 Re-entry
+    "recovery_state": "NONE",    # NONE / WATCHING / RECOVERED
+    "risk_off_time": None,       # Risk-Off 선언 시각 (ISO 문자열)
+    "reentry_count": 0,          # 당일 재진입 횟수
+
+    # 기능2: 섹터 Momentum Delta
+    "sector_scores_morning": {},  # 09:20 섹터별 점수 캐시
+    "sector_scores_midday": {},   # 11:30 섹터별 점수 캐시
+
+    # 기능6: 섹터 멀티플라이어
+    "sector_multipliers": {},     # {"반도체": 1.2, "내수": 0.8, ...}
 }
 
 _lock = threading.Lock()
@@ -57,6 +69,13 @@ def add_to_blacklist(code: str):
     with _lock:
         if code not in shared_state["blacklist"]:
             shared_state["blacklist"].append(code)
+
+
+def update_position(code: str, updates: dict):
+    """포지션 부분 업데이트 (thread-safe)"""
+    with _lock:
+        if code in shared_state["positions"]:
+            shared_state["positions"][code].update(updates)
 
 
 def get_positions() -> dict:

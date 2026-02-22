@@ -12,7 +12,7 @@ from shared_state import (
 )
 from config.settings import (
     MAX_POSITIONS, POSITION_SIZE_RATIO,
-    DAILY_LOSS_LIMIT, PYRAMID_PRICE_TRIGGER,
+    DAILY_LOSS_LIMIT, RECOVERY_POSITION_RATIO,
 )
 
 from tools.trade_logger import log_trade, log_signal, log_risk_event
@@ -113,6 +113,12 @@ class HeadStrategist:
                 # ìµì¢ í¬ì§ì = ê¸°ë³¸ë¹ì x ë§¤í¬ë¡ë¹ì¤ x íê°ë¹ì¤
                 final_pct = POSITION_SIZE_RATIO * macro_position_pct * eval_pct
 
+                # [기능3] Recovery 재진입 시 포지션 축소
+                recovery_state = get_state("recovery_state")
+                if recovery_state == "RECOVERED":
+                    final_pct *= RECOVERY_POSITION_RATIO
+
+
                 # ë°©ì´ì  ì ë´ì´ë©´ ì¶ê° ì¶ì
                 if strategy == "ë°©ì´ì ":
                     final_pct *= 0.5
@@ -158,6 +164,8 @@ class HeadStrategist:
                     "sector": info.get("sector", ""),
                     "entry_time": datetime.now().isoformat(),
                     "pyramiding_done": False,
+                    "pyramid_count": 0,
+                    "entry_atr": info.get("entry_atr", 0),
                 })
                 current_count += 1
 
