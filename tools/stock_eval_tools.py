@@ -65,12 +65,12 @@ STOCK_SECTOR_MAP = {
     "035720": "IT",      # 카카오
     "207940": "바이오",  # 삼성바이오로직스
     "068270": "바이오",  # 셀트리온
-    "105560": "IT",      # KB금융
+    "105560": "금융",    # KB금융
     "055550": "금융",    # 신한지주
-    "003550": "금융",    # LG
+    "003550": "화학",    # LG
     "066570": "IT",      # LG전자
-    "096770": "건설",    # SK이노베이션
-    "028260": "IT",      # 삼성물산
+    "096770": "에너지",  # SK이노베이션
+    "028260": "건설",    # 삼성물산
     "034730": "IT",      # SK
     "012330": "자동차",  # 현대모비스
     "009150": "화학",    # 삼성전기
@@ -616,15 +616,22 @@ def evaluate_stock(code: str, macro_sectors: dict = None,
         }
     vwap_score = calc_vwap_score(df, precomputed_vwap=precomputed_vwap)
 
-    # 매크로 연동 보너스/페널티
+    # [기능6] 매크로 연동 — 섹터 멀티플라이어 기반
     macro_bonus = 0
+    sector_multiplier = 1.0
     if macro_sectors:
         stock_sector = STOCK_SECTOR_MAP.get(code)
         if stock_sector:
-            if stock_sector in macro_sectors.get("sectors", []):
-                macro_bonus = 3  # 유망 섹터 보너스
-            elif stock_sector in macro_sectors.get("avoid_sectors", []):
-                macro_bonus = -4  # 회피 섹터 페널티
+            # 멀티플라이어 적용 (shared_state에서 전달)
+            multipliers = macro_sectors.get("sector_multipliers", {})
+            if multipliers and stock_sector in multipliers:
+                sector_multiplier = multipliers[stock_sector]
+            else:
+                # 멀티플라이어 없을 때 기존 방식 폴백
+                if stock_sector in macro_sectors.get("sectors", []):
+                    macro_bonus = 3
+                elif stock_sector in macro_sectors.get("avoid_sectors", []):
+                    macro_bonus = -4
 
     # 종합 점수 (기존 8개 + VWAP = 9개 모듈)
     total_score = (
@@ -638,6 +645,8 @@ def evaluate_stock(code: str, macro_sectors: dict = None,
         + vwap_score["score"]
         + macro_bonus
     )
+    # 멀티플라이어 적용
+    total_score = round(raw_score * sector_multiplier)
 
     # 등급 산출 (VWAP 추가로 점수 범위 확대 → 기준 조정)
     if total_score >= 17:
@@ -674,6 +683,7 @@ def evaluate_stock(code: str, macro_sectors: dict = None,
         "code": code,
         "grade": grade,
         "total_score": total_score,
+        "raw_score": raw_score,
         "position_pct": position_pct,
         "action": action,
         "rs_warning": rs_warning,
@@ -687,6 +697,7 @@ def evaluate_stock(code: str, macro_sectors: dict = None,
             "sector": sector,
             "vwap": vwap_score,
             "macro_bonus": macro_bonus,
+            "sector_multiplier": sector_multiplier,
         },
         "timestamp": dt.datetime.now().isoformat(),
     }

@@ -363,6 +363,13 @@ def get_cumulative_stats(days: int = 20) -> dict:
 #  ì¥ ë§ê° ë£¨í´ (main.pyìì í¸ì¶)
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
+def get_daily_trades() -> list:
+    """당일 매매 기록 리스트를 반환한다."""
+    with _lock:
+        _ensure_date()
+        return list(_daily_log["trades"])
+
+
 def end_of_day_routine(positions: dict = None, daily_loss: float = 0.0):
     """
     ì¥ ë§ê° ì í¸ì¶ëë íµí© ë£¨í´

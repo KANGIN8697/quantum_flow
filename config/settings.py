@@ -14,21 +14,49 @@ POSITION_SIZE_RATIO = 0.20    # 종목당 초기 투입 비율
 PYRAMID_ADD_RATIO = 0.30      # 추가매수 비율 (초기 대비)
 DAILY_LOSS_LIMIT = -0.03      # 당일 최대 손실 한도
 
-# 추가매수 조건
-PYRAMID_PRICE_TRIGGER = 0.05  # 평단 대비 +5% 상승 시
+# 추가매수 조건 (기능4: 동적 피라미딩)
+PYRAMID_PRICE_TRIGGER = 0.05  # 고정 % 폴백 (ATR 불가 시)
+PYRAMID_ATR_MULTIPLIER = 1.5  # 동적 피라미딩: 진입가 + (1.5 × ATR) 이상일 때
+PYRAMID_MIN_TRIGGER_PCT = 0.02  # ATR 기반 최소 트리거 (2%) — 횡보주 보호
 PYRAMID_VOLUME_RATIO = 0.50   # 초기 진입 거래량의 50%
 PYRAMID_TICK_RATIO = 0.40     # 초기 진입 틱 속도의 40%
 PYRAMID_VOLUME_TREND_MIN = 5  # 거래량 추세 확인 분 단위
+PYRAMID_MAX_COUNT = 2         # 최대 피라미딩 횟수
 
 # 손�H / 트레일링
 ATR_PERIOD = 14
-INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR
+INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR (Day 1)
 TRAILING_STOP_ATR = 3.0       # 트레일링: -3 x ATR
 PYRAMID_STOP_PCT = -0.03      # 추가매수 후 손절: 평단 -3%
+# 타임 디케이 ATR 배수 (일차별)
+TIME_DECAY_ATR = {
+    1: 2.0,    # Day 1: 진입가 - 2.0×ATR
+    2: 1.0,    # Day 2: 진입가 - 1.0×ATR
+    3: -0.3,   # Day 3: 진입가 + 0.3×ATR (본전+버퍼)
+}
 
-# 오버나이트
-OVERNIGHT_THRESHOLD = 0.07    # +7% 이상 시 오버나이트 트랙 전환
-OVERNIGHT_STOP_PCT = -0.05    # 익일 손절: -5%
+# 오버나이트 종합 평가
+OVERNIGHT_THRESHOLD = 0.07    # (레거시) 수익률만으로 판단 시 최소 기준
+OVERNIGHT_STOP_PCT = -0.03    # 익일 손절: 종가 대비 -3%
+
+# 오버나이트 스코어링 (총 100점, 60점 이상 시 홀딩)
+OVERNIGHT_MIN_SCORE = 60      # 오버나이트 최소 합격 점수
+OVERNIGHT_PROFIT_WEIGHT = 25  # 수익률 배점 (max 25)
+OVERNIGHT_NEWS_WEIGHT = 25    # 뉴스/공시 배점 (max 25)
+OVERNIGHT_TREND_WEIGHT = 25   # 차트 추세 배점 (max 25)
+OVERNIGHT_VOLUME_WEIGHT = 25  # 거래량 건전성 배점 (max 25)
+
+# 뉴스 센티먼트 키워드
+OVERNIGHT_NEWS_POSITIVE = [
+    "실적 호조", "어닝 서프라이즈", "상향", "증액", "신고가",
+    "목표주가 상향", "매수 의견", "수주", "흑자전환", "계약 체결",
+    "신규 사업", "성장", "호실적", "최대 실적", "영업이익 증가",
+]
+OVERNIGHT_NEWS_NEGATIVE = [
+    "하향", "감액", "손실", "적자", "리콜", "소송", "제재",
+    "목표주가 하향", "매도 의견", "하락", "유상증자", "횡령",
+    "감사의견 거절", "상장폐지", "공매도", "대량 매도",
+]
 
 # 시간 설정 (KST)
 MARKET_OPEN_HOLD = "09:10"    # 매수 싨호 활성화 시각

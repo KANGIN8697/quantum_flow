@@ -20,7 +20,11 @@ _SCAN_SESSION.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=10,
 
 # ── 의존성 ────────────────────────────────────────────────────
 try:
-    from config.settings import MAX_WATCH_STOCKS, DONCHIAN_PERIOD, RSI_LOWER, RSI_UPPER
+    from config.settings import (
+        MAX_WATCH_STOCKS, DONCHIAN_PERIOD, RSI_LOWER, RSI_UPPER,
+        SECTOR_DELTA_BONUS_MAX, SECTOR_DELTA_BONUS_MIN,
+        SECTOR_MORNING_TIME, SECTOR_MIDDAY_TIME,
+    )
     from shared_state import set_state, get_state
     from tools.scanner_tools import calc_donchian, calc_rsi
     from tools.token_manager import ensure_token
@@ -30,6 +34,10 @@ except ImportError:
     DONCHIAN_PERIOD  = 20
     RSI_LOWER        = 50
     RSI_UPPER        = 70
+    SECTOR_DELTA_BONUS_MAX = 6
+    SECTOR_DELTA_BONUS_MIN = 2
+    SECTOR_MORNING_TIME    = "09:20"
+    SECTOR_MIDDAY_TIME     = "11:30"
     def set_state(k, v): pass
     def get_state(k): return None
     def calc_donchian(df, **k): return {"upper": 0, "lower": 0}
@@ -172,7 +180,7 @@ def _fetch_ohlcv(code: str, period: int = 25) -> object:
         return None
 
 
-# ── 3. 기술적 사전 필�0 ──────────────────────────────────────
+# ── 3. 기술적 사전 필터 ──────────────────────────────────────
 
 def apply_tech_filter(candidates: list, max_out: int = 40) -> list:
     """
@@ -285,6 +293,105 @@ selected 배열에는 6자리 종목코드만 넣으세요. 최대 30개."""
 
 # ── 5. 전체 파이프라인 ────────────────────────────────────────
 
+def _cache_sector_scores(filtered: list, time_key: str):
+    """
+    [기능2] 섹터별 평균 eval_score를 계산하여 shared_state에 캐싱.
+    time_key: "sector_scores_morning" 또는 "sector_scores_midday"
+    """
+    from collections import defaultdict
+    sector_scores = defaultdict(list)
+
+    try:
+        from tools.stock_eval_tools import STOCK_SECTOR_MAP
+    except ImportError:
+        STOCK_SECTOR_MAP = {}
+
+    for c in filtered:
+        code = c.get("code", "")
+        score = c.get("eval_score", 0)
+        sector = STOCK_SECTOR_MAP.get(code, c.get("sector", ""))
+        if sector:
+            sector_scores[sector].append(score)
+
+    avg_scores = {}
+    for sector, scores in sector_scores.items():
+        avg_scores[sector] = round(sum(scores) / len(scores), 2) if scores else 0
+
+    set_state(time_key, avg_scores)
+    return avg_scores
+
+
+def _apply_sector_momentum_delta(filtered: list, round_label: str):
+    """
+    [기능2] 섹터 Momentum Delta 적용.
+    1차(오전): 섹터 점수를 캐싱만 한다.
+    2차(오후): 오전 점수와 비교하여 Delta 가산점을 부여한다.
+    """
+    now_time = datetime.now().strftime("%H:%M")
+
+    if round_label == "1차" or now_time < SECTOR_MIDDAY_TIME:
+        # 오전: 캐싱만
+        scores = _cache_sector_scores(filtered, "sector_scores_morning")
+        if scores:
+            print(f"  📊 [Momentum Delta] 오전 섹터 점수 캐시: {len(scores)}개 섹터")
+        return
+
+    # 2차(오후): Delta 계산
+    morning_scores = get_state("sector_scores_morning") or {}
+    if not morning_scores:
+        print("  ⚠️  [Momentum Delta] 오전 캐시 없음 → Delta 미적용")
+        return
+
+    midday_scores = _cache_sector_scores(filtered, "sector_scores_midday")
+
+    # Delta 계산 및 가산점 부여
+    deltas = {}
+    for sector in midday_scores:
+        if sector in morning_scores:
+            delta = midday_scores[sector] - morning_scores[sector]
+            deltas[sector] = round(delta, 2)
+
+    if not deltas:
+        return
+
+    # 양수 Delta 중 최대/최소로 보너스 스케일링
+    positive_deltas = {s: d for s, d in deltas.items() if d > 0}
+    if not positive_deltas:
+        print(f"  📊 [Momentum Delta] 양수 Delta 없음 → 가산 미적용")
+        return
+
+    max_delta = max(positive_deltas.values())
+    if max_delta <= 0:
+        return
+
+    try:
+        from tools.stock_eval_tools import STOCK_SECTOR_MAP
+    except ImportError:
+        STOCK_SECTOR_MAP = {}
+
+    bonus_applied = 0
+    for c in filtered:
+        code = c.get("code", "")
+        sector = STOCK_SECTOR_MAP.get(code, c.get("sector", ""))
+        if sector in positive_deltas:
+            # Delta 크기에 비례하여 가산점 (2~6점)
+            delta_ratio = positive_deltas[sector] / max_delta
+            bonus = round(
+                SECTOR_DELTA_BONUS_MIN + delta_ratio * (SECTOR_DELTA_BONUS_MAX - SECTOR_DELTA_BONUS_MIN)
+            )
+            c["eval_score"] = c.get("eval_score", 0) + bonus
+            c["delta_bonus"] = bonus
+            bonus_applied += 1
+
+    if bonus_applied > 0:
+        top_sectors = sorted(positive_deltas.items(), key=lambda x: x[1], reverse=True)[:3]
+        print(f"  📊 [Momentum Delta] {bonus_applied}종목에 가산 적용")
+        print(f"     상위 Delta: {top_sectors}")
+
+    # 점수 변경 후 재정렬
+    filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
+
+
 async def run_scanner(round_label: str = "1차") -> list:
     """
     종목 스캐닝 전체 파이프라인을 실행한다.
@@ -329,34 +436,41 @@ async def run_scanner(round_label: str = "1차") -> list:
         print("  ⚠️  필터 결과 부족 → 원본 상위 30종목 사용")
         filtered = candidates[:30]
 
-        # 2.5 주가 상승 지표 평가 (stock_eval)
-        print(f"  📊 종목 평가 진행 중 ({len(filtered)}종목)...")
-        try:
-            macro_state = get_state("macro_result") or {}
-            macro_sectors = {
-                "sectors": macro_state.get("sectors", []),
-                "avoid_sectors": macro_state.get("avoid_sectors", []),
-            }
-            eval_codes = [c["code"] for c in filtered]
-            eval_results = evaluate_multiple(eval_codes, macro_sectors)
-            # 평가 결과를 filtered에 매핑
-            eval_map = {r["code"]: r for r in eval_results}
-            for c in filtered:
-                ev = eval_map.get(c["code"], {})
-                c["eval_grade"] = ev.get("grade", "?")
-                c["eval_score"] = ev.get("total_score", 0)
-                c["eval_action"] = ev.get("action", "")
-                c["position_pct"] = ev.get("position_pct", 0.5)
-            # D/F 등급 필터링
-            before_cnt = len(filtered)
-            filtered = [c for c in filtered if c.get("eval_grade") not in ("D", "F")]
-            filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
-            print(f"  ✅ 평가 완료: {before_cnt}→{len(filtered)}종목 (D/F 제외)")
-            for c in filtered[:5]:
-                print(f"     {c['code']} [{c.get('eval_grade','?')}] score={c.get('eval_score',0)}")
-        except Exception as e:
-            print(f"  ⚠️ 종목 평가 스킵: {e}")
+    # 2.5 주가 상승 지표 평가 (stock_eval) — 모든 필터 결과에 대해 실행
+    print(f"  📊 종목 평가 진행 중 ({len(filtered)}종목)...")
+    try:
+        macro_sectors_list = get_state("macro_sectors") or []
+        avoid_sectors_list = get_state("macro_avoid_sectors") or []
+        sector_multipliers = get_state("sector_multipliers") or {}
+        macro_sectors = {
+            "sectors": macro_sectors_list,
+            "avoid_sectors": avoid_sectors_list,
+            "sector_multipliers": sector_multipliers,
+        }
+        eval_codes = [c["code"] for c in filtered]
+        eval_results = evaluate_multiple(eval_codes, macro_sectors)
+        # 평가 결과를 filtered에 매핑
+        eval_map = {r["code"]: r for r in eval_results}
+        for c in filtered:
+            ev = eval_map.get(c["code"], {})
+            c["eval_grade"] = ev.get("grade", "?")
+            c["eval_score"] = ev.get("total_score", 0)
+            c["eval_action"] = ev.get("action", "")
+            c["position_pct"] = ev.get("position_pct", 0.5)
+            c["sector"] = ev.get("details", {}).get("sector", {}).get("sector", "")
+            c["entry_atr"] = 0  # ATR은 실시간 데이터에서 채워짐
+        # D/F 등급 필터링
+        before_cnt = len(filtered)
+        filtered = [c for c in filtered if c.get("eval_grade") not in ("D", "F")]
+        filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
+        print(f"  ✅ 평가 완료: {before_cnt}→{len(filtered)}종목 (D/F 제외)")
+        for c in filtered[:5]:
+            print(f"     {c['code']} [{c.get('eval_grade','?')}] score={c.get('eval_score',0)}")
+    except Exception as e:
+        print(f"  ⚠️ 종목 평가 스킵: {e}")
 
+    # 2.7 [기능2] 섹터 Momentum Delta 캐싱/적용
+    _apply_sector_momentum_delta(filtered, round_label)
 
     # 3. LLM 최종 선정
     preferred  = get_state("preferred_sectors") or []
@@ -369,6 +483,21 @@ async def run_scanner(round_label: str = "1차") -> list:
 
     # 4. shared_state 업데이트
     set_state("watch_list", watch_list)
+
+    # 4.5 평가 결과를 shared_state에 저장 (head_strategist가 참조)
+    filtered_map = {c["code"]: c for c in filtered}
+    scanner_selected = []
+    for code in watch_list:
+        info = filtered_map.get(code, {})
+        scanner_selected.append({
+            "code": code,
+            "eval_grade": info.get("eval_grade", "?"),
+            "eval_score": info.get("eval_score", 0),
+            "position_pct": info.get("position_pct", 0.5),
+            "sector": info.get("sector", ""),
+            "entry_atr": info.get("entry_atr", 0),
+        })
+    set_state("scanner_result", {"selected": scanner_selected})
 
     preview = watch_list[:5]
     more    = f"... 외 {len(watch_list)-5}개" if len(watch_list) > 5 else ""
@@ -392,6 +521,20 @@ async def run_scanner(round_label: str = "1차") -> list:
         print(f"  ⚠️  저장 실패: {e}")
 
     return watch_list
+
+
+# ── main.py 진입점 ─────────────────────────────────────────────
+
+async def market_scanner_run() -> dict:
+    """
+    main.py에서 호출하는 종목 스캐닝 진입점.
+    run_scanner()를 실행하고 main.py가 기대하는 형식으로 반환.
+    """
+    watch_list = await run_scanner("1차")
+    return {
+        "candidates": len(watch_list),
+        "watch_list": watch_list,
+    }
 
 
 # ── 테스트 블록 ────────────────────────────────────────────────

@@ -1,15 +1,35 @@
-aiohttp>=3.9.5
-websockets>=12.0
+# QUANTUM FLOW — Python 패키지 의존성
+# 설치: pip install -r requirements.txt
+
+# ── 핵심 프레임워크 ──
+crewai>=0.51.0
+openai>=1.40.0
+
+# ── 데이터/금융 ──
 pandas>=2.2.2
 numpy>=1.26.4
 yfinance>=0.2.40
-feedparser>=6.0.11
+
+# ── 네트워크/API ──
+aiohttp>=3.9.5
+websockets>=12.0
 requests>=2.32.3
+
+# ── 스케줄러 ──
+APScheduler>=3.10.4
+
+# ── 이미지/대시보드 ──
+Pillow>=10.0.0
+
+# ── 뉴스/RSS ──
+feedparser>=6.0.11
+
+# ── 텔레그램 ──
 python-telegram-bot>=21.5
-pytz>=2024.1
+
+# ── 유틸리티 ──
 python-dotenv>=1.0.1
-crewai>=0.51.0
-openai>=1.40.0
+pytz>=2024.1
 pycryptodome>=3.20.0
 feedparser
 chromadb>=0.4.0

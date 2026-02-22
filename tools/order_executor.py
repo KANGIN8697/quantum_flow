@@ -4,12 +4,53 @@
 
 import os
 import json
+import time
+import threading
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Token Bucket Rate Limiter ─────────────────────────────────
+# KIS API 제한: 초당 20건 (안전 마진 적용하여 18건/초)
+
+class _TokenBucket:
+    """Thread-safe Token Bucket — API 호출 속도 제한."""
+
+    def __init__(self, rate: float = 18.0, capacity: float = 18.0):
+        self._rate = rate          # 초당 토큰 충전 속도
+        self._capacity = capacity  # 최대 토큰 수
+        self._tokens = capacity
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self, timeout: float = 5.0) -> bool:
+        """
+        토큰 1개를 소비한다. 토큰이 없으면 충전될 때까지 대기.
+        timeout 초 내에 토큰을 얻지 못하면 False 반환.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last_refill
+                self._tokens = min(self._capacity,
+                                   self._tokens + elapsed * self._rate)
+                self._last_refill = now
+
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return True
+
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)  # 50ms 후 재시도
+
+
+_rate_limiter = _TokenBucket(rate=18.0, capacity=18.0)
+
 
 # ── HTTP 세션 풀 (TCP 재사용, 자동 재시도) ──────────────────────
 _RETRY = Retry(total=3, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503])
@@ -122,6 +163,7 @@ def buy_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_BUY), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -186,6 +228,7 @@ def sell_market(code: str, qty: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -246,6 +289,7 @@ def sell_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -296,7 +340,7 @@ def cancel_order(order_no: str, code: str, qty: int, price: int) -> dict:
     ----------
     order_no : 원주문번호 (ODNO)
     code     : 종목코드
-    qty      : ��소 수량
+    qty      : 취소 수량
     price    : 원주문 단가
     """
     url = f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-rvsecncl"
@@ -314,6 +358,7 @@ def cancel_order(order_no: str, code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_CANCEL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -383,6 +428,7 @@ def get_balance() -> dict:
     }
 
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.get(url, headers=_headers(TR_BALANCE), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -453,6 +499,7 @@ def get_order_status(order_no: str) -> dict:
     }
 
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.get(url, headers=_headers(TR_ORDERS), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -486,6 +533,119 @@ def get_order_status(order_no: str) -> dict:
         return {"filled_qty": 0, "remaining_qty": 0, "status": "ERROR", "avg_fill_price": 0}
 
 
+# ── 7. [기능1] Micro-TWAP 분할 매수 ──────────────────────
+
+async def buy_twap(code: str, total_qty: int, price: int,
+                   avg_daily_volume: int = 0,
+                   tick_speed_fn=None) -> dict:
+    """
+    Micro-TWAP: 주문 수량을 분할하여 호가 상태를 확인하며 진입.
+    일평균 거래량 대비 주문 비율에 따라 분할 횟수를 자동 결정.
+
+    Parameters
+    ----------
+    code              : 종목코드
+    total_qty         : 총 주문 수량
+    price             : 주문 단가
+    avg_daily_volume  : 일평균 거래량 (0이면 분할 없이 단일 주문)
+    tick_speed_fn     : 현재 틱 속도를 반환하는 콜백 (없으면 틱 체크 생략)
+
+    Returns
+    -------
+    dict: {success, total_filled, splits_executed, splits_planned, orders}
+    """
+    import asyncio
+
+    try:
+        from config.settings import (
+            TWAP_VOLUME_THRESHOLD, TWAP_MAX_SPLITS,
+            TWAP_INTERVAL_SEC, TWAP_TICK_SPEED_MIN,
+        )
+    except ImportError:
+        TWAP_VOLUME_THRESHOLD = 0.001
+        TWAP_MAX_SPLITS = 4
+        TWAP_INTERVAL_SEC = 45
+        TWAP_TICK_SPEED_MIN = 5
+
+    # 분할 횟수 결정
+    if avg_daily_volume > 0:
+        order_ratio = total_qty / avg_daily_volume
+        if order_ratio < TWAP_VOLUME_THRESHOLD:
+            num_splits = 1  # 유동성 충분 → 분할 불필요
+        elif order_ratio < TWAP_VOLUME_THRESHOLD * 5:
+            num_splits = 2
+        else:
+            num_splits = TWAP_MAX_SPLITS
+    else:
+        num_splits = 1  # 거래량 정보 없으면 단일 주문
+
+    # 분할 수량 계산
+    split_qty = total_qty // num_splits
+    remainder = total_qty % num_splits
+    split_quantities = [split_qty] * num_splits
+    split_quantities[-1] += remainder  # 나머지를 마지막 분할에 추가
+
+    print(f"  📊 [{MODE_LABEL}] TWAP 시작: {code} 총{total_qty}주 → {num_splits}분할")
+
+    orders = []
+    total_filled = 0
+    splits_executed = 0
+
+    for i, qty in enumerate(split_quantities):
+        # 분할 간 대기 (첫 주문은 즉시)
+        if i > 0:
+            # 틱 속도 체크 (콜백 제공 시)
+            if tick_speed_fn is not None:
+                try:
+                    current_tick = tick_speed_fn(code)
+                    if current_tick < TWAP_TICK_SPEED_MIN:
+                        print(f"    ⚠️  분할 {i+1}: 틱속도 부족 ({current_tick:.1f} < {TWAP_TICK_SPEED_MIN}) → 잔여 물량 Skip")
+                        break
+                except Exception:
+                    pass  # 틱 체크 실패 시 계속 진행
+
+            await asyncio.sleep(TWAP_INTERVAL_SEC)
+
+        # IOC 주문 실행
+        result = buy_ioc(code, qty, price)
+        orders.append(result)
+        splits_executed += 1
+
+        if result.get("success"):
+            # 체결 수량 확인
+            order_no = result.get("order_no", "")
+            if order_no:
+                status = get_order_status(order_no)
+                filled = status.get("filled_qty", 0)
+                total_filled += filled
+                print(f"    분할 {i+1}/{num_splits}: {filled}/{qty}주 체결")
+            else:
+                total_filled += qty  # 주문번호 없으면 전량 체결 가정
+                print(f"    분할 {i+1}/{num_splits}: {qty}주 주문 완료")
+        else:
+            print(f"    ❌ 분할 {i+1}/{num_splits}: 주문 실패 → 잔여 물량 Skip")
+            break
+
+    success = total_filled > 0
+    print(f"  {'✅' if success else '❌'} TWAP 완료: {total_filled}/{total_qty}주 체결 ({splits_executed}/{num_splits}분할)")
+
+    twap_result = {
+        "type": "BUY_TWAP",
+        "success": success,
+        "code": code,
+        "total_qty": total_qty,
+        "total_filled": total_filled,
+        "splits_executed": splits_executed,
+        "splits_planned": num_splits,
+        "price": price,
+        "mode": MODE_LABEL,
+        "timestamp": datetime.now().isoformat(),
+        "orders": orders,
+    }
+    _log_order(twap_result)
+    return twap_result
+
+
 # ── 테스트 블록 ────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 55)
@@ -512,15 +672,15 @@ if __name__ == "__main__":
     balance = get_balance()
     print(f"    {balance['cash']:,}원")
     for pos in balance['positions']:
-        print(f"    {pos['name']}({pos['code']}): {pos['qty']}죣�  평단 {pos['avg_price']:,}원  수익 {pos['pnl_pct']:+.2f}%")
+        print(f"    {pos['name']}({pos['code']}): {pos['qty']}주  평단 {pos['avg_price']:,}원  수익 {pos['pnl_pct']:+.2f}%")
 
     print("\n[2] 매수 IOC 테스트 (삼성전자 1주 / 실제 실행됩니다!)")
     print("    ⚠️  실제 주문이 발생합니다. 테스트 시 주의하세요.")
     # result = buy_ioc("005930", qty=1, price=70000)
     # print(f"    결과: {result}")
-    print("    (주묄 해제 후 실햩)")
+    print("    (주석 해제 후 실행)")
 
-    print("\n[3] 주문 똜덴 경로:", LOG_DIR)
+    print("\n[3] 주문 로그 경로:", LOG_DIR)
     print("\n" + "=" * 55)
     print("  ✅ order_executor.py 구조 확인 완료!")
     print("=" * 55)

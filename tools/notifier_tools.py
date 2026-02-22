@@ -17,6 +17,7 @@ _TG_SESSION.mount("https://", HTTPAdapter(pool_connections=1, pool_maxsize=4, ma
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+TELEGRAM_PHOTO_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
 
 
 def _send(text, parse_mode="HTML"):
@@ -34,6 +35,34 @@ def _send(text, parse_mode="HTML"):
         return True
     except Exception as e:
         print(f"  [텔레그램] 전송 실패: {e}")
+        return False
+
+
+def send_image(image_path: str, caption: str = "") -> bool:
+    """텔레그램으로 이미지 파일 전송. 대시보드 이미지 전송에 사용."""
+    if not BOT_TOKEN or not CHAT_ID:
+        print(f"  [텔레그램] 설정 없음 — 이미지: {image_path}")
+        return False
+    if not os.path.exists(image_path):
+        print(f"  [텔레그램] 이미지 파일 없음: {image_path}")
+        return False
+    try:
+        with open(image_path, "rb") as img:
+            data = {"chat_id": CHAT_ID}
+            if caption:
+                data["caption"] = caption
+                data["parse_mode"] = "HTML"
+            resp = _TG_SESSION.post(
+                TELEGRAM_PHOTO_API,
+                data=data,
+                files={"photo": img},
+                timeout=30,
+            )
+        resp.raise_for_status()
+        print(f"  [텔레그램] 이미지 전송 완료: {os.path.basename(image_path)}")
+        return True
+    except Exception as e:
+        print(f"  [텔레그램] 이미지 전송 실패: {e}")
         return False
 
 
@@ -125,6 +154,69 @@ def notify_daily_report(total_trades, win_count, loss_count, total_pnl,
         f"모드: {mode}"
     )
     return _send(text)
+
+
+def notify_trade_decision(action_type, code, position_pct, eval_grade,
+                          strategy, reason, mode="모의투자"):
+    """매매 결정 알림 (head_strategist에서 호출)."""
+    now = datetime.now().strftime("%H:%M:%S")
+    if action_type == "BUY":
+        emoji = "🟢"
+        label = "매수 결정"
+    elif action_type == "SELL_ALL":
+        emoji = "🔴"
+        label = "전량 매도"
+    elif action_type == "PYRAMID":
+        emoji = "🔵"
+        label = "추가 매수"
+    elif action_type == "FORCE_CLOSE":
+        emoji = "🚨"
+        label = "긴급 청산"
+    elif action_type == "OVERNIGHT_HOLD":
+        emoji = "🌙"
+        label = "오버나이트 홀딩"
+    elif action_type == "OVERNIGHT_STOP":
+        emoji = "🌅"
+        label = "오버나이트 손절"
+    else:
+        emoji = "⚪"
+        label = action_type
+
+    text = (
+        f"{emoji} <b>[{label}]</b>  {now}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"종목: <b>{code}</b>\n"
+        f"비중: {position_pct:.1%}  등급: {eval_grade}\n"
+        f"전략: {strategy}\n"
+        f"사유: {reason}\n"
+        f"모드: {mode}"
+    )
+    return _send(text)
+
+
+def notify_stop_loss(code, entry_price, stop_price, current_price,
+                     holding_days, reason, mode="모의투자"):
+    """손절 알림."""
+    pnl_pct = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+    now = datetime.now().strftime("%H:%M:%S")
+    text = (
+        f"🛑 <b>[손절 실행]</b>  {now}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"종목: <b>{code}</b>\n"
+        f"진입가: {entry_price:,.0f}원 → 현재가: {current_price:,.0f}원\n"
+        f"수익률: {pnl_pct:+.2f}%\n"
+        f"손절가: {stop_price:,.0f}원  보유: {holding_days}일\n"
+        f"사유: {reason}\n"
+        f"모드: {mode}"
+    )
+    return _send(text)
+
+
+def notify_dashboard(image_path: str, dashboard_type: str = "일별"):
+    """대시보드 이미지 전송."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    caption = f"📊 QUANTUM FLOW {dashboard_type} 대시보드 ({today})"
+    return send_image(image_path, caption)
 
 
 if __name__ == "__main__":
