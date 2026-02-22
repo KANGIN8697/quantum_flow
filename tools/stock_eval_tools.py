@@ -644,7 +644,7 @@ def evaluate_stock(code: str, macro_sectors: dict = None,
                     macro_bonus = -4
 
     # 종합 점수 (기존 8개 + VWAP = 9개 모듈)
-    total_score = (
+    raw_score = (
         momentum["score"]
         + volume["score"]
         + ma_align["score"]
