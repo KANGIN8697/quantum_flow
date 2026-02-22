@@ -603,7 +603,7 @@ async def buy_twap(code: str, total_qty: int, price: int,
                         print(f"    ⚠️  분할 {i+1}: 틱속도 부족 ({current_tick:.1f} < {TWAP_TICK_SPEED_MIN}) → 잔여 물량 Skip")
                         break
                 except Exception as e:
-                    pass  # 틱 체크 실패 시 계속 진행
+                    logger.debug(f"suppressed: {e}")  #   틱 체크 실패 시 계속 진행
 
             await asyncio.sleep(TWAP_INTERVAL_SEC)
 

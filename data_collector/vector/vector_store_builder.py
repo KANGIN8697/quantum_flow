@@ -102,7 +102,7 @@ class VectorStoreBuilder:
             return True
 
         except Exception as e:
-            logger.error(f"문서 추가 실패: {e}")
+            logger.error(f"문서 추가 실패: {e}", exc_info=True)
             return False
 
     def search_similar(self, query: str, n_results: int = 5) -> list:
@@ -130,7 +130,7 @@ class VectorStoreBuilder:
             return similar_docs
 
         except Exception as e:
-            logger.error(f"유사 문서 검색 실패: {e}")
+            logger.error(f"유사 문서 검색 실패: {e}", exc_info=True)
             return []
 
     def get_collection_stats(self) -> dict:
@@ -144,7 +144,7 @@ class VectorStoreBuilder:
                 "last_updated": datetime.now().isoformat(),
             }
         except Exception as e:
-            logger.error(f"통계 조회 실패: {e}")
+            logger.error(f"통계 조회 실패: {e}", exc_info=True)
             return {}
 
     def clear_collection(self) -> bool:
@@ -155,7 +155,7 @@ class VectorStoreBuilder:
             logger.info("벡터 스토어 초기화 완료")
             return True
         except Exception as e:
-            logger.error(f"컬렉션 초기화 실패: {e}")
+            logger.error(f"컬렉션 초기화 실패: {e}", exc_info=True)
             return False
 
 
@@ -184,7 +184,7 @@ def build_news_vector_store(news_list: list) -> bool:
         return builder.add_documents(documents, {"batch_type": "news"})
 
     except Exception as e:
-        logger.error(f"뉴스 벡터 스토어 구축 실패: {e}")
+        logger.error(f"뉴스 벡터 스토어 구축 실패: {e}", exc_info=True)
         return False
 
 
@@ -211,7 +211,7 @@ def build_disclosure_vector_store(disclosures: list) -> bool:
         return builder.add_documents(documents, {"batch_type": "disclosure"})
 
     except Exception as e:
-        logger.error(f"공시 벡터 스토어 구축 실패: {e}")
+        logger.error(f"공시 벡터 스토어 구축 실패: {e}", exc_info=True)
         return False
 
 
@@ -221,5 +221,5 @@ def search_vector_store(query: str, n_results: int = 5) -> list:
         builder = VectorStoreBuilder()
         return builder.search_similar(query, n_results)
     except Exception as e:
-        logger.error(f"벡터 검색 실패: {e}")
+        logger.error(f"벡터 검색 실패: {e}", exc_info=True)
         return []

@@ -86,7 +86,7 @@ def fetch_global_price(symbol_key: str, period: str = "1d") -> dict:
         return result
 
     except Exception as e:
-        logger.error(f"{symbol_key} 가격 조회 실패: {e}")
+        logger.error(f"{symbol_key} 가격 조회 실패: {e}", exc_info=True)
         return {"error": str(e)}
 
 
@@ -130,5 +130,5 @@ def fetch_historical_global(symbol_key: str, days: int = 30) -> list:
         return data
 
     except Exception as e:
-        logger.error(f"{symbol_key} 과거 데이터 조회 실패: {e}")
+        logger.error(f"{symbol_key} 과거 데이터 조회 실패: {e}", exc_info=True)
         return []

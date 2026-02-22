@@ -89,25 +89,25 @@ def _load_agents():
         from agents.macro_analyst import macro_analyst_run
         _macro_analyst_run = macro_analyst_run
     except ImportError as e:
-        logger.error(f"macro_analyst import 실패: {e}")
+        logger.error(f"macro_analyst import 실패: {e}", exc_info=True)
 
     try:
         from agents.market_scanner import market_scanner_run
         _market_scanner_run = market_scanner_run
     except ImportError as e:
-        logger.error(f"market_scanner import 실패: {e}")
+        logger.error(f"market_scanner import 실패: {e}", exc_info=True)
 
     try:
         from agents.head_strategist import head_strategist_run
         _head_strategist_run = head_strategist_run
     except ImportError as e:
-        logger.error(f"head_strategist import 실패: {e}")
+        logger.error(f"head_strategist import 실패: {e}", exc_info=True)
 
     try:
         from agents.market_watcher import MarketWatcher
         _market_watcher = MarketWatcher(check_interval=60)
     except ImportError as e:
-        logger.error(f"market_watcher import 실패: {e}")
+        logger.error(f"market_watcher import 실패: {e}", exc_info=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -123,7 +123,7 @@ async def job_refresh_token():
         token = ensure_token()
         logger.info(f"토큰 갱신 완료: {token[:20]}...")
     except Exception as e:
-        logger.error(f"토큰 갱신 실패: {e}")
+        logger.error(f"토큰 갱신 실패: {e}", exc_info=True)
         from tools.notifier_tools import notify_error
         notify_error("token_refresh", str(e))
 
@@ -152,7 +152,7 @@ async def job_macro_analysis():
                 if risk_params.get("emergency_liquidate") and _head_strategist_run:
                     await _head_strategist_run()
         except Exception as e:
-            logger.error(f"거시분석 실패: {e}")
+            logger.error(f"거시분석 실패: {e}", exc_info=True)
     else:
         print("  ⚠️ macro_analyst 비활성화")
 
@@ -171,7 +171,7 @@ async def job_market_scan():
             candidates = scan_result.get("candidates", 0)
             print(f"  ✅ 결과: {candidates}종목 감시 등록")
         except Exception as e:
-            logger.error(f"종목 스캔 실패: {e}")
+            logger.error(f"종목 스캔 실패: {e}", exc_info=True)
     else:
         print("  ⚠️ market_scanner 비활성화")
 
@@ -192,7 +192,7 @@ async def job_strategy_decision():
             actions = len(strategy_result.get("actions", []))
             print(f"  ✅ 결과: {actions}건 매매 결정")
         except Exception as e:
-            logger.error(f"전략 결정 실패: {e}")
+            logger.error(f"전략 결정 실패: {e}", exc_info=True)
     else:
         print("  ⚠️ head_strategist 비활성화")
 
@@ -261,7 +261,7 @@ async def job_overnight_check():
                 except Exception as e:
                     logger.debug(f"suppressed: {e}")
             except Exception as e:
-                logger.error(f"오버나이트 손절 실패 ({code}): {e}")
+                logger.error(f"오버나이트 손절 실패 ({code}): {e}", exc_info=True)
         else:
             # 오버나이트 플래그 해제 (정상 진행)
             from shared_state import update_position
@@ -404,7 +404,7 @@ async def job_force_close():
                     pass
 
             except Exception as e:
-                logger.error(f"강제 청산 실패 ({code}): {e}")
+                logger.error(f"강제 청산 실패 ({code}): {e}", exc_info=True)
 
     # 요약
     print(f"\n  {'─'*30}")
@@ -434,7 +434,7 @@ async def job_daily_report():
         trades = get_daily_trades()
         create_and_send_daily_dashboard(perf, trades, positions)
     except Exception as e:
-        logger.error(f"일일 리포트 생성 실패: {e}")
+        logger.error(f"일일 리포트 생성 실패: {e}", exc_info=True)
 
 
 async def job_weekly_report():
@@ -448,7 +448,7 @@ async def job_weekly_report():
         create_and_send_weekly_dashboard()
         logger.info("주별 대시보드 전송 완료")
     except Exception as e:
-        logger.error(f"주별 대시보드 실패: {e}")
+        logger.error(f"주별 대시보드 실패: {e}", exc_info=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -590,7 +590,7 @@ async def run_once():
         except KeyboardInterrupt:
             print("\nℹ️ 사용자 종료 요청")
         except Exception as e:
-            logger.error(f"시장 감시 실패: {e}")
+            logger.error(f"시장 감시 실패: {e}", exc_info=True)
         finally:
             if _market_watcher:
                 _market_watcher._running = False
@@ -615,7 +615,7 @@ def _blocking_watcher_loop():
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(f"MarketWatcher 주기 오류: {e}")
+            logger.error(f"MarketWatcher 주기 오류: {e}", exc_info=True)
         time.sleep(_market_watcher.check_interval)
 
 

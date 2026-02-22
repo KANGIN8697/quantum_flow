@@ -69,7 +69,7 @@ def fetch_dart_disclosures(corp_code: str = "", max_items: int = 20) -> list:
         return disclosures
 
     except Exception as e:
-        logger.error(f"DART 공시 조회 실패: {e}")
+        logger.error(f"DART 공시 조회 실패: {e}", exc_info=True)
         return []
 
 def fetch_major_disclosures(max_items: int = 50) -> list:
@@ -97,7 +97,7 @@ def fetch_major_disclosures(max_items: int = 50) -> list:
         return major_disclosures
 
     except Exception as e:
-        logger.error(f"주요 공시 조회 실패: {e}")
+        logger.error(f"주요 공시 조회 실패: {e}", exc_info=True)
         return []
 
 def fetch_corp_info(corp_code: str) -> dict:
@@ -145,7 +145,7 @@ def fetch_corp_info(corp_code: str) -> dict:
         return corp_info
 
     except Exception as e:
-        logger.error(f"기업 정보 조회 실패: {e}")
+        logger.error(f"기업 정보 조회 실패: {e}", exc_info=True)
         return {}
 
 def search_corp_by_name(corp_name: str) -> list:
@@ -165,5 +165,5 @@ def search_corp_by_name(corp_name: str) -> list:
         return []
 
     except Exception as e:
-        logger.error(f"기업 검색 실패: {e}")
+        logger.error(f"기업 검색 실패: {e}", exc_info=True)
         return []

@@ -77,7 +77,7 @@ def fetch_naver_news(query: str = "증시 전망", max_items: int = 10) -> list:
         return articles
 
     except Exception as e:
-        logger.error(f"네이버 뉴스 조회 실패: {e}")
+        logger.error(f"네이버 뉴스 조회 실패: {e}", exc_info=True)
         return []
 
 
@@ -109,7 +109,7 @@ def fetch_google_news_rss(query: str = "한국 경제 증시", max_items: int = 
         return articles
 
     except Exception as e:
-        logger.error(f"Google News RSS 조회 실패: {e}")
+        logger.error(f"Google News RSS 조회 실패: {e}", exc_info=True)
         return []
 
 

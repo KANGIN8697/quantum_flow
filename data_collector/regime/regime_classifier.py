@@ -171,7 +171,7 @@ def classify_market_regime(price_data: list) -> dict:
         return result
 
     except Exception as e:
-        logger.error(f"국면 분류 오류: {e}")
+        logger.error(f"국면 분류 오류: {e}", exc_info=True)
         return {"regime": "ERROR", "confidence": 0.0, "indicators": {}, "error": str(e)}
 
 

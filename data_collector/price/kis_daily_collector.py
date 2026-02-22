@@ -54,7 +54,7 @@ def get_access_token() -> str:
             logger.error(f"토큰 획득 실패: {data}")
             return ""
     except Exception as e:
-        logger.error(f"토큰 획득 오류: {e}")
+        logger.error(f"토큰 획득 오류: {e}", exc_info=True)
         return ""
 
 
@@ -132,7 +132,7 @@ def fetch_daily_price(code: str, days_back: int = 30) -> list:
         return daily_data
 
     except Exception as e:
-        logger.error(f"{code} 일봉 조회 오류: {e}")
+        logger.error(f"{code} 일봉 조회 오류: {e}", exc_info=True)
         return []
 
 

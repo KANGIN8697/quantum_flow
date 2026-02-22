@@ -83,7 +83,7 @@ def fetch_ohlcv(code: str, period: str = "3mo") -> Optional["pd.DataFrame"]:
             df.columns = df.columns.get_level_values(0)
         return df
     except Exception as e:
-        logger.error(f"{code} OHLCV 조회 실패: {e}")
+        logger.error(f"{code} OHLCV 조회 실패: {e}", exc_info=True)
         return None
 
 
@@ -364,7 +364,7 @@ def scan_candidates(codes: list = None) -> list:
             if result["passed"]:
                 passed.append(result)
         except Exception as e:
-            logger.error(f"{code} 스캔 실패: {e}")
+            logger.error(f"{code} 스캔 실패: {e}", exc_info=True)
 
     logger.info(f"스캔 완료: {len(codes)}종목 중 {len(passed)}종목 통과")
     return passed

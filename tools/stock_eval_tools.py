@@ -127,7 +127,7 @@ def fetch_price_data(code: str, period: str = "6mo") -> Optional["pd.DataFrame"]
         _price_cache[cache_key] = df
         return df
     except Exception as e:
-        logger.error(f"{code} 가격 수집 실패: {e}")
+        logger.error(f"{code} 가격 수집 실패: {e}", exc_info=True)
         return None
 
 
@@ -720,7 +720,7 @@ def evaluate_multiple(codes: list, macro_sectors: dict = None) -> list:
             r = evaluate_stock(code, macro_sectors)
             results.append(r)
         except Exception as e:
-            logger.error(f"{code} 평가 실패: {e}")
+            logger.error(f"{code} 평가 실패: {e}", exc_info=True)
             results.append({
                 "code": code,
                 "grade": "F",

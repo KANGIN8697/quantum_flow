@@ -88,7 +88,7 @@ def fetch_fred_series(series_id: str, days_back: int = 10) -> dict:
         return {"error": "데이터 없음"}
 
     except Exception as e:
-        logger.error(f"FRED {series_id} 조회 실패: {e}")
+        logger.error(f"FRED {series_id} 조회 실패: {e}", exc_info=True)
         return {"error": str(e)}
 
 
@@ -149,5 +149,5 @@ def fetch_fred_time_series(series_id: str, days_back: int = 365) -> list:
         return time_series
 
     except Exception as e:
-        logger.error(f"FRED 시계열 {series_id} 조회 실패: {e}")
+        logger.error(f"FRED 시계열 {series_id} 조회 실패: {e}", exc_info=True)
         return []

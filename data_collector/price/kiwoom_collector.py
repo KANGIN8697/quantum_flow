@@ -148,7 +148,7 @@ def run_daily(tickers: list = None, timeframes: list = None):
                     total_rows += inserted
                 time.sleep(0.25)  # 키움 호출 제한 준수
             except Exception as e:
-                logger.error(f"키움 {ticker} {tf}분봉 실패: {e}")
+                logger.error(f"키움 {ticker} {tf}분봉 실패: {e}", exc_info=True)
                 log_collection("kiwoom", f"{tf}m_daily", ticker, 0, "ERROR", str(e))
 
     log_collection("kiwoom", "daily_update", rows_added=total_rows)

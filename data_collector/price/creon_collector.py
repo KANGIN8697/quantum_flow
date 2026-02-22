@@ -115,7 +115,7 @@ def check_creon_connection() -> bool:
             logger.error("Creon HTS 미접속. 관리자 권한으로 Creon Plus 실행 필요.")
         return bool(connected)
     except Exception as e:
-        logger.error(f"Creon 접속 확인 실패: {e}")
+        logger.error(f"Creon 접속 확인 실패: {e}", exc_info=True)
         return False
 
 
@@ -275,7 +275,7 @@ def collect_all(timeframes: list = None, tickers: list = None):
                     logger.info(f"  진행: {i}/{len(tickers)} ({elapsed:.0f}초 경과)")
 
             except Exception as e:
-                logger.error(f"  {ticker} {tf}분봉 수집 실패: {e}")
+                logger.error(f"  {ticker} {tf}분봉 수집 실패: {e}", exc_info=True)
                 log_collection("creon", f"{tf}m_bars", ticker, 0, "ERROR", str(e))
                 continue
 

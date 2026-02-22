@@ -91,7 +91,7 @@ class PipelineScheduler:
                 }
 
             except Exception as e:
-                logger.error(f"작업 준비 실패 {task_name}: {e}")
+                logger.error(f"작업 준비 실패 {task_name}: {e}", exc_info=True)
 
     async def run_task(self, task_name: str) -> dict:
         """특정 작업 실행"""
@@ -117,7 +117,7 @@ class PipelineScheduler:
             return result
 
         except Exception as e:
-            logger.error(f"작업 실행 실패 {task_name}: {e}")
+            logger.error(f"작업 실행 실패 {task_name}: {e}", exc_info=True)
             return {
                 "task": task_name,
                 "status": "error",
@@ -151,7 +151,7 @@ class PipelineScheduler:
                 logger.info("스케줄러 중단 요청")
                 break
             except Exception as e:
-                logger.error(f"스케줄러 오류: {e}")
+                logger.error(f"스케줄러 오류: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
         logger.info("데이터 수집 파이프라인 스케줄러 종료")
@@ -197,7 +197,7 @@ async def start_pipeline_scheduler() -> dict:
         scheduler.stop()
         return {"status": "stopped"}
     except Exception as e:
-        logger.error(f"스케줄러 실행 실패: {e}")
+        logger.error(f"스케줄러 실행 실패: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
 
 

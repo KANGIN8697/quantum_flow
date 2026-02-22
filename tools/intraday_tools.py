@@ -120,7 +120,7 @@ def fetch_intraday_candles(
         logger.debug("KIS API 미연결 — 분봉 데이터 조회 불가")
         return None
     except Exception as e:
-        logger.error(f"{code} 분봉 조회 오류: {e}")
+        logger.error(f"{code} 분봉 조회 오류: {e}", exc_info=True)
         return None
 
 
