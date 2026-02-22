@@ -10,6 +10,9 @@ from datetime import datetime
 
 import websockets
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 def safe_float(val, default=0.0):
     """pandas Series/numpy -> float safely"""
@@ -94,7 +97,8 @@ class KISWebSocketFeeder:
                 msg1 = data.get("body", {}).get("msg1", "")
                 if msg1:
                     print(f"  ✉️  시스템 메시지: {msg1}")
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.debug(f"tools/websocket_feeder.py: {type(e).__name__}: {e}")
                 pass
             return
         parts = message.split("|")
@@ -200,7 +204,8 @@ if __name__ == "__main__":
             print(f"\n⏱  10초간 실시간 데이터 수신 중...\n")
             try:
                 await asyncio.wait_for(feeder.listen(), timeout=10)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as e:
+                logger.debug(f"tools/websocket_feeder.py: {type(e).__name__}: {e}")
                 pass
             print("\n" + "=" * 55)
             price_data = feeder.get_latest_price("005930")

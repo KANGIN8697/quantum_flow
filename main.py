@@ -258,7 +258,7 @@ async def job_overnight_check():
                         data.get("entry_pct", 0), data.get("overnight_grade", "?"),
                         "손절", f"종가 {closing_price:,.0f} 대비 {change_pct:+.1f}%",
                     )
-                except Exception:
+                except Exception as e:
                     pass
             except Exception as e:
                 logger.error(f"오버나이트 손절 실패 ({code}): {e}")
@@ -317,7 +317,8 @@ async def job_force_close():
                 return None
             df.columns = [c.lower() for c in df.columns]
             return df
-        except Exception:
+        except Exception as e:
+            logger.debug(f"main.py: {type(e).__name__}: {e}")
             return None
 
     overnight_held = []  # 오버나이트 홀딩 종목
@@ -335,7 +336,8 @@ async def job_force_close():
                     if pos["code"] == code:
                         current_price = pos["current_price"]
                         break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"main.py: {type(e).__name__}: {e}")
                 pass
 
         # OHLCV 로드 + 오버나이트 종합 평가
@@ -378,7 +380,8 @@ async def job_force_close():
                     data.get("entry_pct", 0), grade,
                     "오버나이트", f"종합 {score}점 | 종가 {closing_price:,.0f} | 손절 {stop_loss:,.0f}",
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"main.py: {type(e).__name__}: {e}")
                 pass
 
         else:
@@ -400,7 +403,8 @@ async def job_force_close():
                         data.get("entry_pct", 0), grade,
                         "강제청산", f"오버나이트 불합격 ({score}점)",
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"main.py: {type(e).__name__}: {e}")
                     pass
 
             except Exception as e:

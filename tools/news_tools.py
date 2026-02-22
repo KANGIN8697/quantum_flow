@@ -10,6 +10,9 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from requests.adapters import HTTPAdapter, Retry
+import logging
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -220,7 +223,8 @@ def _parse_naver_finance_html(html: str, code: str, max_items: int) -> list:
                 "code":   code,
             })
 
-    except Exception:
+    except Exception as e:
+        logger.debug(f"tools/news_tools.py: {type(e).__name__}: {e}")
         pass
 
     return items[:max_items]

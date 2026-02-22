@@ -181,7 +181,8 @@ def _fetch_ohlcv(code: str, period: int = 25) -> object:
         if len(rows) < 5:
             return None
         return pd.DataFrame(rows[::-1])
-    except Exception:
+    except Exception as e:
+        logger.debug(f"agents/market_scanner.py: {type(e).__name__}: {e}")
         return None
 
 

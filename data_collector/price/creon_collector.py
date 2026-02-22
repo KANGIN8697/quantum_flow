@@ -295,7 +295,8 @@ def _notify_completion(total_rows: int, elapsed: float):
             f"총 {total_rows:,}건 수집\n"
             f"소요 시간: {elapsed/60:.1f}분"
         )
-    except Exception:
+    except Exception as e:
+        logger.debug(f"data_collector/price/creon_collector.py: {type(e).__name__}: {e}")
         pass
 
 

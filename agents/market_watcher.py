@@ -155,7 +155,8 @@ class MarketWatcher:
                 print(f"  ❌ [MarketWatcher] 주기 오류: {e}")
                 try:
                     notify_error("MarketWatcher._loop", str(e), MODE_LABEL)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
                     pass
             time.sleep(self.check_interval)
 
@@ -189,7 +190,8 @@ class MarketWatcher:
                         else:
                             remaining = (RECOVERY_MIN_WAIT - elapsed) / 60
                             print(f"  ℹ️  Risk-Off 대기 중 (잔여 {remaining:.0f}분)")
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
                         pass
                 return
 
@@ -300,7 +302,8 @@ class MarketWatcher:
                         chg = (safe_float(d["Close"].iloc[-1]) - safe_float(d["Close"].iloc[-2])) / safe_float(d["Close"].iloc[-2])
                         if chg < 0:
                             drop_count += 1
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
                     pass
 
             print(f"    시총상위5 하락: {drop_count}종목")
@@ -541,7 +544,8 @@ Risk-Off 선언 시각: {risk_off_time}
             notify_error("MarketWatcher.Recovery",
                          f"Risk-Off 해제, 보수적 매매 재개 ({reentry_count}회차)",
                          MODE_LABEL)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
             pass
 
 
@@ -574,7 +578,8 @@ def _watcher_blocking_loop(watcher: MarketWatcher):
             print(f"  ❌ [MarketWatcher] 주기 오류: {e}")
             try:
                 notify_error("MarketWatcher", str(e), MODE_LABEL)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
                 pass
         time.sleep(watcher.check_interval)
     print(f"🛑 [{MODE_LABEL}] MarketWatcher 종료")

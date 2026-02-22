@@ -158,7 +158,8 @@ def run_daily(tickers: list = None, timeframes: list = None):
     try:
         from tools.notifier_tools import _send
         _send(f"<b>[키움 증분 수집]</b> 당일 분봉 {total_rows:,}건 추가")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"data_collector/price/kiwoom_collector.py: {type(e).__name__}: {e}")
         pass
 
 

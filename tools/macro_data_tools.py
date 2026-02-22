@@ -12,6 +12,9 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta
 from urllib.parse import quote
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 def safe_float(val, default=0.0):
     """pandas Series/numpy -> float safely"""
@@ -139,7 +142,8 @@ def fetch_yfinance_recent() -> dict:
     """yfinance로 최근 5일간 종가 조회 (주말에도 직전 거래일 데이터 반환)"""
     try:
         import yfinance as yf
-    except ImportError:
+    except ImportError as e:
+        logger.debug(f"tools/macro_data_tools.py: {type(e).__name__}: {e}")
         return {}
     
     symbols = {
@@ -211,7 +215,8 @@ def _fetch_google_news_fallback(query: str, max_items: int) -> list:
                 "link": item.findtext("link", ""),
             })
         return articles
-    except Exception:
+    except Exception as e:
+        logger.debug(f"tools/macro_data_tools.py: {type(e).__name__}: {e}")
         return []
 
 
@@ -241,7 +246,8 @@ def fetch_naver_news_search(query: str = "증시 전망", max_items: int = 10) -
                 "link": item.get("link", ""),
             })
         return articles
-    except Exception:
+    except Exception as e:
+        logger.debug(f"tools/macro_data_tools.py: {type(e).__name__}: {e}")
         return []
 
 

@@ -153,7 +153,8 @@ class HeadStrategist:
                         info.get("eval_grade", "?"), strategy,
                         action["reason"],
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"agents/head_strategist.py: {type(e).__name__}: {e}")
                     pass
 
 
@@ -231,7 +232,8 @@ class HeadStrategist:
                     positions[code].get("entry_pct", 0), "?",
                     "긴급청산", "긴급 전량 청산 (CRITICAL)",
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"agents/head_strategist.py: {type(e).__name__}: {e}")
                 pass
             print(f"    ð¨ ê¸´ê¸ ì²­ì°: {code}")
         return actions

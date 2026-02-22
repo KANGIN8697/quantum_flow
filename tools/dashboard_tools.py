@@ -167,7 +167,7 @@ def generate_daily_dashboard(performance: dict, trades: list,
     for row_idx, row_items in enumerate(summary_items):
         bg = ROW_EVEN if row_idx % 2 == 0 else ROW_ODD
         draw.rectangle([(padding, y), (width - padding, y + row_h)], fill=bg)
-        col_w = (width - padding * 2) // len(row_items)
+        col_w = (width - padding * 2) // max(len(row_items), 1)
         for col_idx, (label, value, color) in enumerate(row_items):
             x = padding + col_w * col_idx + 8
             draw.text((x, y + 2), label, fill=GRAY, font=font_small)
@@ -322,7 +322,7 @@ def generate_weekly_dashboard(weekly_stats: dict, daily_summaries: list) -> str:
     for row_idx, row_items in enumerate(summary_rows):
         bg = ROW_EVEN if row_idx % 2 == 0 else ROW_ODD
         draw.rectangle([(padding, y), (width - padding, y + row_h)], fill=bg)
-        col_w = (width - padding * 2) // len(row_items)
+        col_w = (width - padding * 2) // max(len(row_items), 1)
         for col_idx, (label, value, color) in enumerate(row_items):
             x = padding + col_w * col_idx + 8
             draw.text((x, y + 2), label, fill=GRAY, font=font_small)
