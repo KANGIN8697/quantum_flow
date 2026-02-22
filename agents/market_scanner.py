@@ -104,7 +104,9 @@ def fetch_volume_top(top_n: int = 50) -> list:
     list of dict: [{code, name, volume, price, change_pct}, ...]
     """
     try:
-        url = f"{BASE_URL}/uapi/domestic-stock/v1/ranking/volume"
+        # ranking API는 모의투자 서버 미지원 -> 실서버 사용
+        REAL_BASE = "https://openapi.koreainvestment.com:9443"
+        url = f"{REAL_BASE}/uapi/domestic-stock/v1/ranking/volume"
         params = {
             "FID_COND_MRKT_DIV_CODE":  "J",
             "FID_COND_SCR_DIV_CODE":   "20171",
@@ -212,6 +214,23 @@ def apply_tech_filter(candidates: list, max_out: int = 40) -> list:
                 item["donchian_upper"] = upper
                 item["rsi"]            = round(rsi, 1)
                 item["near_donchian"]  = near_donchian
+                # score calculation
+                score = 0
+                reasons = []
+                if item.get("near_donchian"):
+                    score += 40
+                    reasons.append("donchian_top(+40)")
+                if rsi and RSI_LOWER <= rsi <= RSI_UPPER:
+                    score += 30
+                    reasons.append(f"RSI_ok({rsi:.0f},+30)")
+                if item.get("change_pct", 0) > 0:
+                    score += 15
+                    reasons.append(f"up({item.get('change_pct',0):+.1f}%,+15)")
+                if item.get("volume", 0) > 1000000:
+                    score += 15
+                    reasons.append("high_vol(+15)")
+                item["score"] = score
+                item["reasons"] = reasons
                 passed.append(item)
 
         except Exception:

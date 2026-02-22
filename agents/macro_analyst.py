@@ -9,6 +9,14 @@ import asyncio
 from datetime import datetime, date
 from dotenv import load_dotenv
 
+def safe_float(v, d=0.0):
+    try:
+        if hasattr(v,"iloc"): return safe_float(v.iloc[-1])
+        if hasattr(v,"item"): return safe_float(v.item())
+        return safe_float(v)
+    except: return d
+
+
 load_dotenv()
 
 # ── 의존성 ────────────────────────────────────────────────
@@ -222,7 +230,7 @@ def _validate_sector_multipliers(raw: dict) -> dict:
     validated = {}
     for sector, mult in raw.items():
         try:
-            val = float(mult)
+            val = safe_float(mult)
             val = max(SECTOR_MULTIPLIER_MIN, min(val, SECTOR_MULTIPLIER_MAX))
             validated[sector] = round(val, 2)
         except (ValueError, TypeError):

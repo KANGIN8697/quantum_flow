@@ -30,7 +30,7 @@ INDICATORS = {
     },
     "unemployment": {
         "stat_code": "901Y027",
-        "item_code": "3130000",
+        "item_code": "I31A",
         "cycle": "M",
         "name": "실업률",
     },
@@ -47,7 +47,7 @@ INDICATORS = {
         "name": "경상수지",
     },
     "export_growth": {
-        "stat_code": "403Y003",
+        "stat_code": "403Y001",
         "item_code": "000000",
         "cycle": "M",
         "name": "수출증가율",

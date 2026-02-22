@@ -23,7 +23,7 @@ PYRAMID_TICK_RATIO = 0.40     # 초기 진입 틱 속도의 40%
 PYRAMID_VOLUME_TREND_MIN = 5  # 거래량 추세 확인 분 단위
 PYRAMID_MAX_COUNT = 2         # 최대 피라미딩 횟수
 
-# 손�H / 트레일링
+# 손�H / 트레일링
 ATR_PERIOD = 14
 INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR (Day 1)
 TRAILING_STOP_ATR = 3.0       # 트레일링: -3 x ATR
@@ -98,3 +98,20 @@ INTRADAY_60M_BARS = 5         # 60분봉 조회 개수
 # 감시 풀
 MAX_WATCH_STOCKS = 30         # 최대 감시 종목 수
 NEWS_CHECK_INTERVAL = 20      # Agent 4 뉴스 수집 주기 (분)
+
+
+# ========== Auto-added constants ==========
+RECOVERY_MAX_REENTRY = None  # TODO: set proper value
+RECOVERY_MIN_WAIT = None  # TODO: set proper value
+RECOVERY_POSITION_RATIO = 0.5  # recovery phase position ratio
+SECTOR_DELTA_BONUS_MAX = 0.2  # sector delta bonus max
+SECTOR_DELTA_BONUS_MIN = 0.05  # sector delta bonus min
+SECTOR_MIDDAY_TIME = "12:00"  # midday sector time
+SECTOR_MORNING_TIME = "09:30"  # morning sector time
+SECTOR_MULTIPLIER_DEFAULT = 1.0  # sector default multiplier
+SECTOR_MULTIPLIER_MAX = 1.5  # sector max multiplier
+SECTOR_MULTIPLIER_MIN = 0.5  # sector min multiplier
+TWAP_INTERVAL_SEC = 30  # TWAP interval sec
+TWAP_MAX_SPLITS = 5  # TWAP max splits
+TWAP_TICK_SPEED_MIN = 3  # TWAP min tick speed
+TWAP_VOLUME_THRESHOLD = 500000  # TWAP volume threshold
