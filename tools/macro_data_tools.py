@@ -159,7 +159,7 @@ def fetch_yfinance_recent() -> dict:
                 prev = df.iloc[-2] if len(df) > 1 else last
                 close_val = safe_float(last["Close"].iloc[0]) if hasattr(last["Close"], "iloc") else safe_float(last["Close"])
                 prev_val = safe_float(prev["Close"].iloc[0]) if hasattr(prev["Close"], "iloc") else safe_float(prev["Close"])
-                chg = ((close_val - prev_val) / prev_val * 100) if prev_val else 0
+                chg = ((close_val - prev_val) / (prev_val or 1) * 100) if prev_val else 0
                 results[name] = {
                     "value": round(close_val, 2),
                     "change_pct": round(chg, 2),

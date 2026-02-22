@@ -239,7 +239,7 @@ async def job_overnight_check():
             logger.warning(f"  {code}: 종가/손절가 미설정 — 손절 체크 스킵")
             continue
 
-        change_pct = (current_price / closing_price - 1) * 100
+        change_pct = (current_price / (closing_price or 1) - 1) * 100
         print(f"  {code}: 현재 {current_price:,.0f}원 / 종가 {closing_price:,.0f}원 / 손절선 {stop_price:,.0f}원 ({change_pct:+.1f}%)")
 
         if current_price <= stop_price:

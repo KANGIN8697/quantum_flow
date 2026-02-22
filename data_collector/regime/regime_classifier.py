@@ -38,7 +38,7 @@ def calculate_sma(prices: list, period: int) -> list:
     """단순 이동평균 계산"""
     if len(prices) < period:
         return []
-    return [sum(prices[i:i+period]) / period for i in range(len(prices) - period + 1)]
+    return [sum(prices[i:i+period]) / (period or 1) for i in range(len(prices) - period + 1)]
 
 
 def calculate_rsi(prices: list, period: int = 14) -> float:
@@ -57,13 +57,13 @@ def calculate_rsi(prices: list, period: int = 14) -> float:
             gains.append(0)
             losses.append(abs(change))
 
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
+    avg_gain = sum(gains[-period:]) / (period or 1)
+    avg_loss = sum(losses[-period:]) / (period or 1)
 
     if avg_loss == 0:
         return 100.0
 
-    rs = avg_gain / avg_loss
+    rs = avg_gain / (avg_loss or 1)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
@@ -87,12 +87,12 @@ def calculate_adx(highs: list, lows: list, closes: list, period: int = 14) -> fl
         dm_minus_values.append(dm_minus)
 
     # ATR 계산
-    atr = sum(tr_values[-period:]) / period
-    di_plus = (sum(dm_plus_values[-period:]) / period) / atr * 100 if atr > 0 else 0
-    di_minus = (sum(dm_minus_values[-period:]) / period) / atr * 100 if atr > 0 else 0
+    atr = sum(tr_values[-period:]) / (period or 1)
+    di_plus = (sum(dm_plus_values[-period:]) / (period or 1)) / atr * 100 if atr > 0 else 0
+    di_minus = (sum(dm_minus_values[-period:]) / (period or 1)) / atr * 100 if atr > 0 else 0
 
     dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100 if (di_plus + di_minus) > 0 else 0
-    adx = sum([dx] * period) / period  # 단순화
+    adx = sum([dx] * period) / (period or 1)  # 단순화
 
     return adx
 
@@ -118,7 +118,7 @@ def classify_market_regime(price_data: list) -> dict:
 
         current_price = closes[-1]
         sma_current = sma20[-1]
-        trend_strength = (current_price - sma_current) / sma_current
+        trend_strength = (current_price - sma_current) / (sma_current or 1)
 
         # RSI
         rsi = calculate_rsi(closes, 14)

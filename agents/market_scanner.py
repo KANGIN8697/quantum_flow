@@ -398,7 +398,7 @@ def _apply_sector_momentum_delta(filtered: list, round_label: str):
         sector = STOCK_SECTOR_MAP.get(code, c.get("sector", ""))
         if sector in positive_deltas:
             # Delta 크기에 비례하여 가산점 (2~6점)
-            delta_ratio = positive_deltas[sector] / max_delta
+            delta_ratio = positive_deltas[sector] / (max_delta or 1)
             bonus = round(
                 SECTOR_DELTA_BONUS_MIN + delta_ratio * (SECTOR_DELTA_BONUS_MAX - SECTOR_DELTA_BONUS_MIN)
             )

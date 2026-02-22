@@ -81,7 +81,7 @@ def fetch_global_price(symbol_key: str, period: str = "1d") -> dict:
         close = safe_float(latest["Close"])
         prev_close = safe_float(prev["Close"])
         change = close - prev_close
-        change_pct = (change / prev_close * 100) if prev_close else 0
+        change_pct = (change / (prev_close or 1) * 100) if prev_close else 0
 
         result = {
             "symbol": symbol_key,

@@ -347,7 +347,7 @@ def get_cumulative_stats(days: int = 20) -> dict:
         "cumulative_pnl": round(total_pnl, 4),
         "win_count": total_wins,
         "loss_count": total_losses,
-        "win_rate": round(total_wins / total_closed, 3) if total_closed else 0,
+        "win_rate": round(total_wins / (total_closed or 1), 3) if total_closed else 0,
         "avg_win": round(sum(all_win_pcts) / len(all_win_pcts), 4) if all_win_pcts else 0,
         "avg_loss": round(sum(all_loss_pcts) / len(all_loss_pcts), 4) if all_loss_pcts else 0,
         "profit_factor": abs(

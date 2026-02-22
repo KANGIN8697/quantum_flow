@@ -221,11 +221,11 @@ def calc_volume_surge(df: "pd.DataFrame") -> dict:
         return {"score": 0, "ratio": 0}
 
     recent_vol = safe_float(vol.iloc[-1])
-    ratio = recent_vol / avg_20
+    ratio = recent_vol / (avg_20 or 1)
 
     # 최근 5일 평균도 확인 (지속적 거래량 증가)
     avg_5 = safe_float(vol.iloc[-5:].mean())
-    ratio_5d = avg_5 / avg_20
+    ratio_5d = avg_5 / (avg_20 or 1)
 
     score = 0
     if ratio > 5:
@@ -364,7 +364,7 @@ def calc_52w_high_proximity(df: "pd.DataFrame") -> dict:
     # 52주 범위 내 위치 (0~100%)
     position = (cur - low_52w) / (high_52w - low_52w) * 100
     # 고가 대비 %
-    from_high = (cur / high_52w - 1) * 100
+    from_high = (cur / (high_52w or 1) - 1) * 100
 
     score = 0
     if from_high > -2:

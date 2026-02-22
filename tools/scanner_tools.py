@@ -140,7 +140,7 @@ def calc_volume_ratio(df: "pd.DataFrame", base_days: int = 20) -> float:
     if avg_vol == 0:
         return 1.0
     today_vol = safe_float(df["Volume"].iloc[-1])
-    return round(today_vol / avg_vol, 2)
+    return round(today_vol / (avg_vol or 1), 2)
 
 
 # ── ATR (Average True Range) ────────────────────────────────
@@ -192,9 +192,9 @@ def calc_vwap(df: "pd.DataFrame", period: int = None) -> dict:
     if vol_sum == 0:
         return {"vwap": 0, "price_above_vwap": False, "deviation_pct": 0}
 
-    vwap = float((tp * vol).sum() / vol_sum)
+    vwap = float((tp * vol).sum() / (vol_sum or 1))
     cur = safe_float(df["Close"].iloc[-1])
-    deviation = (cur / vwap - 1) * 100 if vwap > 0 else 0
+    deviation = (cur / (vwap or 1) - 1) * 100 if vwap > 0 else 0
 
     return {
         "vwap": round(vwap, 2),
@@ -243,7 +243,7 @@ def calc_adx(df: "pd.DataFrame", period: int = None) -> dict:
         result = np.zeros(len(arr))
         result[p] = arr[1:p + 1].sum()
         for i in range(p + 1, len(arr)):
-            result[i] = result[i - 1] - result[i - 1] / p + arr[i]
+            result[i] = result[i - 1] - result[i - 1] / (p or 1) + arr[i]
         return result
 
     smooth_tr = wilder_smooth(tr, period)
@@ -252,12 +252,12 @@ def calc_adx(df: "pd.DataFrame", period: int = None) -> dict:
 
     # +DI, -DI (0 나누기 경고 억제 — np.where로 안전 처리됨)
     with np.errstate(divide='ignore', invalid='ignore'):
-        plus_di = np.where(smooth_tr > 0, 100 * smooth_plus / smooth_tr, 0)
-        minus_di = np.where(smooth_tr > 0, 100 * smooth_minus / smooth_tr, 0)
+        plus_di = np.where(smooth_tr > 0, 100 * smooth_plus / (smooth_tr or 1), 0)
+        minus_di = np.where(smooth_tr > 0, 100 * smooth_minus / (smooth_tr or 1), 0)
 
         # DX → ADX
         di_sum = plus_di + minus_di
-        dx = np.where(di_sum > 0, 100 * np.abs(plus_di - minus_di) / di_sum, 0)
+        dx = np.where(di_sum > 0, 100 * np.abs(plus_di - minus_di) / (di_sum or 1), 0)
 
     # ADX = DX의 wilder smoothing
     adx = np.zeros(n)
@@ -265,7 +265,7 @@ def calc_adx(df: "pd.DataFrame", period: int = None) -> dict:
     if start_idx < n:
         adx[start_idx] = dx[period + 1:start_idx + 1].mean()
         for i in range(start_idx + 1, n):
-            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / (period or 1)
 
     adx_val = float(adx[-1])
     pdi_val = float(plus_di[-1])

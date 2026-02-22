@@ -243,7 +243,7 @@ class MarketWatcher:
             if len(vix_data) >= 2:
                 vix_prev  = safe_float(vix_data["Close"].iloc[-2])
                 vix_today = safe_float(vix_data["Close"].iloc[-1])
-                vix_chg   = (vix_today - vix_prev) / vix_prev
+                vix_chg   = (vix_today - vix_prev) / (vix_prev or 1)
 
                 if self._prev["vix"] is None:
                     self._prev["vix"] = vix_prev
@@ -263,7 +263,7 @@ class MarketWatcher:
             if len(ks_data) >= 2:
                 ks_prev  = safe_float(ks_data["Close"].iloc[-2])
                 ks_today = safe_float(ks_data["Close"].iloc[-1])
-                ks_chg   = (ks_today - ks_prev) / ks_prev
+                ks_chg   = (ks_today - ks_prev) / (ks_prev or 1)
 
                 print(f"    KOSPI: {ks_today:,.0f}  (전일대비 {ks_chg:+.2%})")
 

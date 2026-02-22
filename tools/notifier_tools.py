@@ -89,7 +89,7 @@ def notify_buy(code, name, qty, price, score, stop_loss, mode="모의투자"):
 
 def notify_sell(code, name, qty, price, entry_price, reason, mode="모의투자"):
     """매도 체결 알림."""
-    pnl_pct = (price-entry_price)/entry_price*100 if entry_price>0 else 0.0
+    pnl_pct = (price-entry_price)/ (entry_price or 1)*100 if entry_price>0 else 0.0
     pnl_amt = (price-entry_price)*qty
     emoji = " " if pnl_pct<0 else " "
     now = datetime.now().strftime("%H:%M:%S")
@@ -137,7 +137,7 @@ def notify_daily_report(total_trades, win_count, loss_count, total_pnl,
                         total_pnl_pct, positions_held, mode="모의투자"):
     """장 마감 후 일일 거래 결과 리포트 전송."""
     today = datetime.now().strftime("%Y-%m-%d")
-    win_rate = (win_count/total_trades*100) if total_trades>0 else 0.0
+    win_rate = (win_count/ (total_trades or 1)*100) if total_trades>0 else 0.0
     pnl_emoji = " " if total_pnl>=0 else " "
     overnight_str = ""
     if positions_held:
@@ -197,7 +197,7 @@ def notify_trade_decision(action_type, code, position_pct, eval_grade,
 def notify_stop_loss(code, entry_price, stop_price, current_price,
                      holding_days, reason, mode="모의투자"):
     """손절 알림."""
-    pnl_pct = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+    pnl_pct = (current_price - entry_price) / (entry_price or 1) * 100 if entry_price > 0 else 0
     now = datetime.now().strftime("%H:%M:%S")
     text = (
         f"🛑 <b>[손절 실행]</b>  {now}\n"

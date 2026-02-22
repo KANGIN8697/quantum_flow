@@ -456,7 +456,7 @@ def get_balance() -> dict:
             avg_price = safe_float(item.get("pchs_avg_pric", 0))
             current_price = safe_float(item.get("prpr", 0))
             pnl_pct = (
-                (current_price - avg_price) / avg_price * 100
+                (current_price - avg_price) / (avg_price or 1) * 100
                 if avg_price > 0 else 0.0
             )
             positions.append({
@@ -581,7 +581,7 @@ async def buy_twap(code: str, total_qty: int, price: int,
 
     # 분할 횟수 결정
     if avg_daily_volume > 0:
-        order_ratio = total_qty / avg_daily_volume
+        order_ratio = total_qty / (avg_daily_volume or 1)
         if order_ratio < TWAP_VOLUME_THRESHOLD:
             num_splits = 1  # 유동성 충분 → 분할 불필요
         elif order_ratio < TWAP_VOLUME_THRESHOLD * 5:
@@ -592,7 +592,7 @@ async def buy_twap(code: str, total_qty: int, price: int,
         num_splits = 1  # 거래량 정보 없으면 단일 주문
 
     # 분할 수량 계산
-    split_qty = total_qty // num_splits
+    split_qty = total_qty // (num_splits or 1)
     remainder = total_qty % num_splits
     split_quantities = [split_qty] * num_splits
     split_quantities[-1] += remainder  # 나머지를 마지막 분할에 추가

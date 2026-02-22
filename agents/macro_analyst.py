@@ -15,7 +15,7 @@ def safe_float(v, d=0.0):
         if hasattr(v,"iloc"): return safe_float(v.iloc[-1])
         if hasattr(v,"item"): return safe_float(v.item())
         return safe_float(v)
-    except: return d
+    except Exception: return d
 
 
 load_dotenv()
