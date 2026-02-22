@@ -101,8 +101,8 @@ NEWS_CHECK_INTERVAL = 20      # Agent 4 뉴스 수집 주기 (분)
 
 
 # ========== Auto-added constants ==========
-RECOVERY_MAX_REENTRY = None  # TODO: set proper value
-RECOVERY_MIN_WAIT = None  # TODO: set proper value
+RECOVERY_MAX_REENTRY = 3  # max reentry count in recovery phase
+RECOVERY_MIN_WAIT = 30  # min wait minutes between recovery reentries
 RECOVERY_POSITION_RATIO = 0.5  # recovery phase position ratio
 SECTOR_DELTA_BONUS_MAX = 0.2  # sector delta bonus max
 SECTOR_DELTA_BONUS_MIN = 0.05  # sector delta bonus min

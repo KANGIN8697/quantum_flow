@@ -8,6 +8,35 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'): val = val.iloc[-1]
+        if hasattr(val, 'item'): return float(val.item())
+        return float(val)
+    except (TypeError, ValueError, IndexError): return default
+
+
+def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
+    """yfinance download with retry logic"""
+    import time
+    for attempt in range(retries):
+        try:
+            data = safe_yf_download(ticker, period=period, interval=interval,
+                             progress=False, timeout=10)
+            if data is not None and not data.empty:
+                return data
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"    yf.download({ticker}) retry {attempt+1}/{retries}: {e}")
+                time.sleep(2 * (attempt + 1))
+            else:
+                print(f"    yf.download({ticker}) failed after {retries} retries: {e}")
+    return None
+
+
+
+
 try:
     import yfinance as yf
 except ImportError:
@@ -208,8 +237,8 @@ class MarketWatcher:
             vix_data = yf.download(VIX_TICKER, period="5d", interval="1d",
                                    progress=False, auto_adjust=True)
             if len(vix_data) >= 2:
-                vix_prev  = float(vix_data["Close"].iloc[-2])
-                vix_today = float(vix_data["Close"].iloc[-1])
+                vix_prev  = safe_float(vix_data["Close"].iloc[-2])
+                vix_today = safe_float(vix_data["Close"].iloc[-1])
                 vix_chg   = (vix_today - vix_prev) / vix_prev
 
                 if self._prev["vix"] is None:
@@ -228,8 +257,8 @@ class MarketWatcher:
             ks_data = yf.download(KOSPI_TICKER, period="5d", interval="1d",
                                   progress=False, auto_adjust=True)
             if len(ks_data) >= 2:
-                ks_prev  = float(ks_data["Close"].iloc[-2])
-                ks_today = float(ks_data["Close"].iloc[-1])
+                ks_prev  = safe_float(ks_data["Close"].iloc[-2])
+                ks_today = safe_float(ks_data["Close"].iloc[-1])
                 ks_chg   = (ks_today - ks_prev) / ks_prev
 
                 print(f"    KOSPI: {ks_today:,.0f}  (전일대비 {ks_chg:+.2%})")
@@ -245,8 +274,8 @@ class MarketWatcher:
             fx_data = yf.download(USDKRW_TICKER, period="5d", interval="1d",
                                   progress=False, auto_adjust=True)
             if len(fx_data) >= 2:
-                fx_prev  = float(fx_data["Close"].iloc[-2])
-                fx_today = float(fx_data["Close"].iloc[-1])
+                fx_prev  = safe_float(fx_data["Close"].iloc[-2])
+                fx_today = safe_float(fx_data["Close"].iloc[-1])
                 fx_chg   = abs(fx_today - fx_prev)
 
                 print(f"    USD/KRW: {fx_today:.1f}  (전일대비 {fx_today - fx_prev:+.1f}원)")
@@ -262,10 +291,10 @@ class MarketWatcher:
             drop_count = 0
             for ticker in TOP10_TICKERS[:5]:   # API 부하 감소를 위해 5개만
                 try:
-                    d = yf.download(ticker, period="5d", interval="1d",
+                    d = safe_yf_download(ticker, period="5d", interval="1d",
                                     progress=False, auto_adjust=True)
                     if len(d) >= 2:
-                        chg = (float(d["Close"].iloc[-1]) - float(d["Close"].iloc[-2])) / float(d["Close"].iloc[-2])
+                        chg = (safe_float(d["Close"].iloc[-1]) - safe_float(d["Close"].iloc[-2])) / safe_float(d["Close"].iloc[-2])
                         if chg < 0:
                             drop_count += 1
                 except Exception:
