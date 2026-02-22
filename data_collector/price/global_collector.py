@@ -45,6 +45,10 @@ GLOBAL_TICKERS = {
     "GC=F":      "금",
     "HG=F":      "구리",
 
+    # 한국 지수 (regime_classifier 필수)
+    "^KS11":     "KOSPI",
+    "^KQ11":     "KOSDAQ",
+
     # 아시아 지수
     "000001.SS": "상하이종합",
     "^HSI":      "항셍",

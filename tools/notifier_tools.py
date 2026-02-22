@@ -172,6 +172,12 @@ def notify_trade_decision(action_type, code, position_pct, eval_grade,
     elif action_type == "FORCE_CLOSE":
         emoji = "🚨"
         label = "긴급 청산"
+    elif action_type == "OVERNIGHT_HOLD":
+        emoji = "🌙"
+        label = "오버나이트 홀딩"
+    elif action_type == "OVERNIGHT_STOP":
+        emoji = "🌅"
+        label = "오버나이트 손절"
     else:
         emoji = "⚪"
         label = action_type

@@ -186,8 +186,18 @@ def collect_all(incremental: bool = True):
         if incremental:
             latest = get_latest_date("kr_macro")
             if latest and latest > "2000-01-01":
-                # latest "2025-12-01" → "202512"
-                start = latest.replace("-", "")[:6]
+                # latest "2025-12-01" → 다음 달 "202601"부터 수집
+                from datetime import datetime as _dt
+                try:
+                    dt = _dt.strptime(latest, "%Y-%m-%d")
+                    # 다음 달 1일
+                    if dt.month == 12:
+                        next_m = _dt(dt.year + 1, 1, 1)
+                    else:
+                        next_m = _dt(dt.year, dt.month + 1, 1)
+                    start = next_m.strftime("%Y%m")
+                except ValueError:
+                    start = latest.replace("-", "")[:6]
 
         items = _fetch_ecos_series(
             stat_code=ind["stat_code"],

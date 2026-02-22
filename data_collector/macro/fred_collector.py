@@ -111,7 +111,8 @@ def collect_all(incremental: bool = True):
         if incremental:
             latest = get_latest_date("us_macro")
             if latest and latest > "2000-01-01":
-                start_date = latest
+                # 마지막 날짜 다음날부터 수집 (중복 방지)
+                start_date = (datetime.strptime(latest, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
         items = _fetch_fred_series(series["series_id"], start_date=start_date)
 

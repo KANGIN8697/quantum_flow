@@ -235,12 +235,16 @@ async def job_overnight_check():
         if current_price <= 0:
             logger.warning(f"  {code}: 현재가 조회 불가 — 손절 체크 스킵")
             continue
+        if closing_price <= 0 or stop_price <= 0:
+            logger.warning(f"  {code}: 종가/손절가 미설정 — 손절 체크 스킵")
+            continue
 
-        print(f"  {code}: 현재 {current_price:,.0f}원 / 종가 {closing_price:,.0f}원 / 손절선 {stop_price:,.0f}원")
+        change_pct = (current_price / closing_price - 1) * 100
+        print(f"  {code}: 현재 {current_price:,.0f}원 / 종가 {closing_price:,.0f}원 / 손절선 {stop_price:,.0f}원 ({change_pct:+.1f}%)")
 
         if current_price <= stop_price:
             # ── 손절 실행 ──
-            print(f"    → 손절 발동! (종가 대비 {(current_price/closing_price - 1)*100:+.1f}%)")
+            print(f"    → 손절 발동! (종가 대비 {change_pct:+.1f}%)")
             try:
                 result = sell_market(code, qty=0)
                 log_trade("OVERNIGHT_STOP", code,
@@ -252,7 +256,7 @@ async def job_overnight_check():
                     notify_trade_decision(
                         "OVERNIGHT_STOP", code,
                         data.get("entry_pct", 0), data.get("overnight_grade", "?"),
-                        "손절", f"종가 {closing_price:,.0f} 대비 {(current_price/closing_price-1)*100:+.1f}%",
+                        "손절", f"종가 {closing_price:,.0f} 대비 {change_pct:+.1f}%",
                     )
                 except Exception:
                     pass
@@ -309,6 +313,8 @@ async def job_force_close():
             import yfinance as yf
             ticker = yf.Ticker(f"{code}.KS")
             df = ticker.history(period="3mo")
+            if df.empty:
+                return None
             df.columns = [c.lower() for c in df.columns]
             return df
         except Exception:

@@ -19,6 +19,9 @@ import signal
 import asyncio
 from datetime import datetime
 
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -26,7 +29,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(
-            os.path.join(os.path.dirname(__file__), "..", "logs", "pipeline.log"),
+            os.path.join(_LOG_DIR, "pipeline.log"),
             encoding="utf-8",
         ),
     ],

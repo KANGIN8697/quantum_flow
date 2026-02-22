@@ -273,7 +273,6 @@ def backfill_regimes(start_date: str = "2020-01-01", end_date: str = None):
 def _apply_regime_to_ohlcv(regime_rows: list):
     """분류된 regime을 가격 테이블의 regime 컬럼에 반영."""
     try:
-        from database.db_manager import get_conn
         with get_conn() as conn:
             for row in regime_rows:
                 date = row["date"]
