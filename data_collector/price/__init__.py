@@ -1,0 +1,1 @@
+# data_collector/price/__init__.py

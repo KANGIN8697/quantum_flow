@@ -20,7 +20,7 @@ PYRAMID_VOLUME_RATIO = 0.50   # 초기 진입 거래량의 50%
 PYRAMID_TICK_RATIO = 0.40     # 초기 진입 틱 속도의 40%
 PYRAMID_VOLUME_TREND_MIN = 5  # 거래량 추세 확인 분 단위
 
-# 손절 / 트레일링
+# 손�H / 트레일링
 ATR_PERIOD = 14
 INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR
 TRAILING_STOP_ATR = 3.0       # 트레일링: -3 x ATR
@@ -31,7 +31,7 @@ OVERNIGHT_THRESHOLD = 0.07    # +7% 이상 시 오버나이트 트랙 전환
 OVERNIGHT_STOP_PCT = -0.05    # 익일 손절: -5%
 
 # 시간 설정 (KST)
-MARKET_OPEN_HOLD = "09:10"    # 매수 신호 활성화 시각
+MARKET_OPEN_HOLD = "09:10"    # 매수 싨호 활성화 시각
 FORCE_CLOSE_TIME = "15:20"    # 강제 청산 시각
 NO_PYRAMID_AFTER = "15:00"    # 추가매수 금지 시각
 SCANNER_RUN_1 = "08:30"       # Agent 2 1차 실행
@@ -44,6 +44,28 @@ FX_CHANGE_THRESHOLD = 15      # 달러/원 ±15원
 MARKET_DROP_COUNT = 7         # 시총 상위 10종목 중 하락 종목 수
 RISK_OFF_TRIGGER_MIN = 2      # 4개 트리거 중 최소 충족 수
 RISK_OFF_CONFIRM_WAIT = 60    # Risk-Off 선언 전 유예 시간 (초)
+
+# 기술적 지표 (ADX, VWAP)
+ADX_PERIOD = 14               # ADX 계산 기간
+ADX_THRESHOLD = 25            # ADX 진입 최소값 (추세 확인)
+VWAP_LOOKBACK = 20            # VWAP 계산 기간 (일봉 기준)
+DONCHIAN_PROXIMITY_PCT = 0.97 # 돈치안 상단 근접 판정 비율 (97%)
+
+# 분봉 추세 판단
+INTRADAY_15M_MA_THRESHOLD = 0.002  # MA3/MA8 추세 판단 최소 이탈률 (0.2%)
+
+# 수급 분석
+INVESTOR_CUMUL_DAYS = 3       # 수급 누적 일수 (기존 5 → 3)
+INVESTOR_WEIGHT_DAY1 = 1.5    # 최근일 가중치
+INVESTOR_WEIGHT_DAY2 = 1.0
+INVESTOR_WEIGHT_DAY3 = 0.5
+
+# 상대강도 진입 게이트
+RS_ENTRY_THRESHOLD = 2        # RS 점수 최소 진입 기준
+
+# 분봉 데이터 (KIS API)
+INTRADAY_15M_BARS = 8         # 15분봉 조회 개수 (2시간)
+INTRADAY_60M_BARS = 5         # 60분봉 조회 개수
 
 # 감시 풀
 MAX_WATCH_STOCKS = 30         # 최대 감시 종목 수

@@ -1,165 +1,378 @@
-# tools/scanner_tools.py — 종목 스캐닝 & 전략 계산 엔진
-# Phase 4 구현: 기술지표 계산, 매수/추가매수 신호 판단, 손절 계산
+# scanner_tools.py — 종목 스캐닝 도구 (돈치안 채널, RSI, 거래량 분석)
+# market_scanner.py에서 사용
 
-import math
-import numpy as np
-from datetime import datetime
+import logging
+from typing import Optional
 
 try:
-    from config.settings import (
-        DONCHIAN_PERIOD, VOLUME_SURGE_RATIO, TICK_SPEED_MIN,
-        RSI_LOWER, RSI_UPPER, ATR_PERIOD,
-        INITIAL_STOP_ATR, TRAILING_STOP_ATR, PYRAMID_STOP_PCT,
-        OVERNIGHT_THRESHOLD, PYRAMID_PRICE_TRIGGER, PYRAMID_VOLUME_RATIO,
-        PYRAMID_TICK_RATIO, PYRAMID_VOLUME_TREND_MIN,
-    )
+    import pandas as pd
 except ImportError:
-    DONCHIAN_PERIOD=20; VOLUME_SURGE_RATIO=2.0; TICK_SPEED_MIN=5
-    RSI_LOWER=50; RSI_UPPER=70; ATR_PERIOD=14
-    INITIAL_STOP_ATR=2.0; TRAILING_STOP_ATR=3.0; PYRAMID_STOP_PCT=-0.03
-    OVERNIGHT_THRESHOLD=0.07; PYRAMID_PRICE_TRIGGER=0.05
-    PYRAMID_VOLUME_RATIO=0.50; PYRAMID_TICK_RATIO=0.40; PYRAMID_VOLUME_TREND_MIN=5
+    pd = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
+from config.settings import (
+    DONCHIAN_PERIOD, VOLUME_SURGE_RATIO,
+    RSI_LOWER, RSI_UPPER,
+    ADX_PERIOD, ADX_THRESHOLD, VWAP_LOOKBACK,
+    ATR_PERIOD, DONCHIAN_PROXIMITY_PCT,
+)
+
+logger = logging.getLogger("scanner_tools")
+
+# ── 코스피 시총 상위 종목 (후보군) ──────────────────────────
+# 실제로는 KIS API로 동적 조회하나, 초기에는 고정 리스트 사용
+KOSPI_TOP_CODES = [
+    "005930",  # 삼성전자
+    "000660",  # SK하이닉스
+    "373220",  # LG에너지솔루션
+    "207940",  # 삼성바이오로직스
+    "005380",  # 현대차
+    "000270",  # 기아
+    "068270",  # 셀트리온
+    "051910",  # LG화학
+    "006400",  # 삼성SDI
+    "035420",  # NAVER
+    "035720",  # 카카오
+    "055550",  # 신한지주
+    "105560",  # KB금융
+    "003550",  # LG
+    "066570",  # LG전자
+    "012330",  # 현대모비스
+    "028260",  # 삼성물산
+    "034730",  # SK
+    "009150",  # 삼성전기
+    "096770",  # SK이노베이션
+    "032830",  # 삼성생명
+    "003670",  # 포스코홀딩스
+    "010130",  # 고려아연
+    "030200",  # KT
+    "017670",  # SK텔레콤
+    "086790",  # 하나금융지주
+    "018260",  # 삼성에스디에스
+    "316140",  # 우리금융지주
+    "011200",  # HMM
+    "259960",  # 크래프톤
+]
 
 
-def calc_atr(df, period=ATR_PERIOD):
-    """Average True Range (ATR) — numpy 벡터화 (Wilder 방식)."""
-    if len(df) < period + 1: return 0.0
-    h = df["high"].values.astype(float)
-    l = df["low"].values.astype(float)
-    c = df["close"].values.astype(float)
-    tr = np.maximum(h[1:] - l[1:],
-                    np.abs(h[1:] - c[:-1]),
-                    np.abs(l[1:] - c[:-1]))
-    if len(tr) < period:
-        return float(tr.mean()) if len(tr) > 0 else 0.0
-    atr = float(tr[:period].mean())
-    for val in tr[period:]:
-        atr = (atr * (period - 1) + val) / period
-    return round(atr, 2)
+def _to_yf_ticker(code: str) -> str:
+    """한국 종목코드 → yfinance 티커"""
+    return f"{code}.KS"
 
 
-def calc_rsi(df, period=14):
-    """Relative Strength Index (RSI) — numpy 벡터화."""
-    closes = df["close"].values.astype(float)
-    if len(closes) < period + 1: return 50.0
-    delta  = np.diff(closes)
-    gains  = np.where(delta > 0,  delta, 0.0)
-    losses = np.where(delta < 0, -delta, 0.0)
-    if len(gains) < period: return 50.0
-    ag = gains[:period].mean()
-    al = losses[:period].mean()
-    for g, lo in zip(gains[period:], losses[period:]):
-        ag = (ag * (period - 1) + g)  / period
-        al = (al * (period - 1) + lo) / period
-    if al == 0: return 100.0
-    return round(100 - (100 / (1 + ag / al)), 2)
+def fetch_ohlcv(code: str, period: str = "3mo") -> Optional["pd.DataFrame"]:
+    """yfinance에서 OHLCV 데이터 조회"""
+    if yf is None:
+        return None
+    try:
+        ticker = _to_yf_ticker(code)
+        df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+    except Exception as e:
+        logger.error(f"{code} OHLCV 조회 실패: {e}")
+        return None
 
 
-def calc_bollinger(df, period=20):
-    """Bollinger Bands — numpy 벡터화. 반환: {upper, mid, lower}"""
-    closes = df["close"].values.astype(float)
-    if len(closes) < period:
-        last = float(closes[-1]) if len(closes) > 0 else 0
-        return {"upper": last, "mid": last, "lower": last}
-    recent = closes[-period:]
-    mid    = float(recent.mean())
-    std    = float(recent.std(ddof=0))
-    return {"upper": round(mid + 2*std, 2), "mid": round(mid, 2), "lower": round(mid - 2*std, 2)}
+# ── 기술적 지표 계산 ──────────────────────────────────────
+
+def calc_rsi(close: "pd.Series", period: int = 14) -> float:
+    """RSI 계산 (최근값 반환)"""
+    if close is None or len(close) < period + 1:
+        return 50.0  # 기본값
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = 100 - (100 / (1 + rs))
+    val = float(rsi.iloc[-1])
+    return val if not pd.isna(val) else 50.0
 
 
-def calc_donchian(df, period=DONCHIAN_PERIOD):
-    """Donchian Channel 계산. 반환: {upper, lower}"""
-    if len(df)<period: return {"upper":0.0,"lower":0.0}
-    recent=df.tail(period)
-    return {"upper":float(recent['high'].max()),"lower":float(recent['low'].min())}
+def calc_donchian(df: "pd.DataFrame", period: int = 20) -> dict:
+    """돈치안 채널 계산"""
+    if df is None or len(df) < period:
+        return {"upper": 0, "lower": 0, "breakout": False}
 
-
-def check_buy_signal(code, current_price, volume_today, volume_yesterday_same_time, tick_speed, df_ohlcv):
-    """
-    매수 신호 판단 (최대 100점)
-    필수: F1 돈치안돌파(25) + F2 거래량급증(15-25) + F3 틱속도(10-20)
-    보조: RSI(8-15) + 볼린저상단돌파(15)
-    """
-    score=0; filters_passed=[]; reasons=[]
-    dc=calc_donchian(df_ohlcv); bb=calc_bollinger(df_ohlcv); rsi=calc_rsi(df_ohlcv)
-
-    f1=current_price>=dc["upper"] and dc["upper"]>0
-    if f1: score+=25; filters_passed.append("F1_DONCHIAN"); reasons.append("돈치안돌파")
-    else: reasons.append("돈치안미달")
-
-    vr=volume_today/volume_yesterday_same_time if volume_yesterday_same_time>0 else 0.0
-    if vr>=4.0: score+=25; filters_passed.append("F2_VOLUME_4X"); f2=True; reasons.append(f"거래량4배({vr:.1f}x)")
-    elif vr>=3.0: score+=20; filters_passed.append("F2_VOLUME_3X"); f2=True; reasons.append(f"거래량3배({vr:.1f}x)")
-    elif vr>=VOLUME_SURGE_RATIO: score+=15; filters_passed.append("F2_VOLUME_2X"); f2=True; reasons.append(f"거래량2배({vr:.1f}x)")
-    else: reasons.append(f"거래량부족({vr:.1f}x)"); f2=False
-
-    if tick_speed>=20: score+=20; filters_passed.append("F3_TICK_20+"); f3=True; reasons.append(f"틱속도20+")
-    elif tick_speed>=10: score+=15; filters_passed.append("F3_TICK_10+"); f3=True; reasons.append(f"틱속도10+")
-    elif tick_speed>=TICK_SPEED_MIN: score+=10; filters_passed.append("F3_TICK_5+"); f3=True; reasons.append(f"틱속도5+")
-    else: reasons.append("틱속도부족"); f3=False
-
-    if RSI_LOWER<=rsi<60: score+=8; reasons.append(f"RSI50-59({rsi:.1f})")
-    elif 60<=rsi<66: score+=12; reasons.append(f"RSI60-65({rsi:.1f})")
-    elif 66<=rsi<RSI_UPPER: score+=15; reasons.append(f"RSI66-69({rsi:.1f})")
-    elif rsi>=RSI_UPPER: reasons.append(f"RSI과열({rsi:.1f})")
-    else: reasons.append(f"RSI낮음({rsi:.1f})")
-
-    if current_price>=bb["upper"] and bb["upper"]>0: score+=15; reasons.append("볼린저상단돌파")
+    high = df["High"].iloc[-period:]
+    low = df["Low"].iloc[-period:]
+    upper = float(high.max())
+    lower = float(low.min())
+    cur = float(df["Close"].iloc[-1])
 
     return {
-        "signal": f1 and f2 and f3, "score": score,
-        "reason": " | ".join(reasons), "filters_passed": filters_passed,
-        "rsi": rsi, "donchian_upper": dc["upper"], "bollinger_upper": bb["upper"], "vol_ratio": round(vr,2),
+        "upper": upper,
+        "lower": lower,
+        "current": cur,
+        "breakout": cur >= upper,  # 상단 돌파
+        "breakdown": cur <= lower,  # 하단 이탈
     }
 
 
-def check_pyramid_signal(code, entry_price, avg_price, current_price,
-    entry_volume, current_volume, entry_tick_speed, current_tick_speed,
-    df_recent, pyramiding_done=False, no_pyramid_after="15:00"):
-    """추가매수(피라미딩) 조건 5가지 모두 충족 시 True 반환."""
-    from datetime import datetime
-    if pyramiding_done: return False
-    if datetime.now().strftime("%H:%M")>=no_pyramid_after: return False
-    if current_price<avg_price*(1+PYRAMID_PRICE_TRIGGER): return False
-    if entry_volume>0 and current_volume<entry_volume*PYRAMID_VOLUME_RATIO: return False
-    if entry_tick_speed>0 and current_tick_speed<entry_tick_speed*PYRAMID_TICK_RATIO: return False
-    return True
+def calc_volume_ratio(df: "pd.DataFrame", base_days: int = 20) -> float:
+    """최근 1일 거래량 / 20일 평균 거래량"""
+    if df is None or len(df) < base_days + 1:
+        return 1.0
+    avg_vol = float(df["Volume"].iloc[-(base_days + 1):-1].mean())
+    if avg_vol == 0:
+        return 1.0
+    today_vol = float(df["Volume"].iloc[-1])
+    return round(today_vol / avg_vol, 2)
 
 
-def calc_stop_loss(entry_price, atr):
-    """초기 손절가: 진입가 - ATR x INITIAL_STOP_ATR"""
-    return round(entry_price - atr*INITIAL_STOP_ATR, 0)
+# ── ATR (Average True Range) ────────────────────────────────
 
-def calc_trailing_stop(high_price, atr):
-    """트레일링 손절가: 최고가 - ATR x TRAILING_STOP_ATR"""
-    return round(high_price - atr*TRAILING_STOP_ATR, 0)
+def calc_atr(df: "pd.DataFrame", period: int = None) -> float:
+    """
+    ATR 계산 — 변동성 기반 동적 손절에 사용
+    True Range = max(H-L, |H-prevC|, |L-prevC|)
+    ATR = TR의 period일 이동평균
+    """
+    if period is None:
+        period = ATR_PERIOD
+    if df is None or len(df) < period + 1:
+        return 0.0
 
-def calc_pyramid_stop(avg_price):
-    """추가매수 후 손절가: 평단 x (1 + PYRAMID_STOP_PCT)"""
-    return round(avg_price*(1+PYRAMID_STOP_PCT), 0)
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
 
-def is_overnight_candidate(entry_price, current_price):
-    """수익률 >= OVERNIGHT_THRESHOLD 이면 오버나이트 트랙으로 전환."""
-    if entry_price<=0: return False
-    return (current_price-entry_price)/entry_price >= OVERNIGHT_THRESHOLD
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(window=period).mean()
+    val = float(atr.iloc[-1])
+    return round(val, 2) if not pd.isna(val) else 0.0
 
 
+# ── VWAP (Volume-Weighted Average Price) ────────────────────
+
+def calc_vwap(df: "pd.DataFrame", period: int = None) -> dict:
+    """
+    일봉 기준 VWAP 계산
+    TP = (High + Low + Close) / 3
+    VWAP = Σ(TP × Volume) / Σ(Volume) over period
+    """
+    if period is None:
+        period = VWAP_LOOKBACK
+    if df is None or len(df) < period:
+        return {"vwap": 0, "price_above_vwap": False, "deviation_pct": 0}
+
+    recent = df.iloc[-period:]
+    tp = (recent["High"] + recent["Low"] + recent["Close"]) / 3
+    vol = recent["Volume"]
+
+    vol_sum = float(vol.sum())
+    if vol_sum == 0:
+        return {"vwap": 0, "price_above_vwap": False, "deviation_pct": 0}
+
+    vwap = float((tp * vol).sum() / vol_sum)
+    cur = float(df["Close"].iloc[-1])
+    deviation = (cur / vwap - 1) * 100 if vwap > 0 else 0
+
+    return {
+        "vwap": round(vwap, 2),
+        "current_price": round(cur, 2),
+        "price_above_vwap": cur > vwap,
+        "deviation_pct": round(deviation, 2),
+    }
+
+
+# ── ADX (Average Directional Index) ────────────────────────
+
+def calc_adx(df: "pd.DataFrame", period: int = None) -> dict:
+    """
+    ADX 계산 — 추세 강도 측정
+    ADX ≥ 25: 추세 존재 (매매 적합)
+    ADX < 25: 횡보 (진입 회피)
+    """
+    if period is None:
+        period = ADX_PERIOD
+    if df is None or len(df) < period * 2 + 1:
+        return {"adx": 0, "plus_di": 0, "minus_di": 0, "trending": False}
+
+    high = df["High"].values
+    low = df["Low"].values
+    close = df["Close"].values
+    n = len(high)
+
+    # +DM, -DM 계산
+    plus_dm = np.zeros(n)
+    minus_dm = np.zeros(n)
+    tr = np.zeros(n)
+
+    for i in range(1, n):
+        h_diff = high[i] - high[i - 1]
+        l_diff = low[i - 1] - low[i]
+        plus_dm[i] = h_diff if (h_diff > l_diff and h_diff > 0) else 0
+        minus_dm[i] = l_diff if (l_diff > h_diff and l_diff > 0) else 0
+        tr[i] = max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1]),
+        )
+
+    # Wilder Smoothing (지수이동평균)
+    def wilder_smooth(arr, p):
+        result = np.zeros(len(arr))
+        result[p] = arr[1:p + 1].sum()
+        for i in range(p + 1, len(arr)):
+            result[i] = result[i - 1] - result[i - 1] / p + arr[i]
+        return result
+
+    smooth_tr = wilder_smooth(tr, period)
+    smooth_plus = wilder_smooth(plus_dm, period)
+    smooth_minus = wilder_smooth(minus_dm, period)
+
+    # +DI, -DI (0 나누기 경고 억제 — np.where로 안전 처리됨)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        plus_di = np.where(smooth_tr > 0, 100 * smooth_plus / smooth_tr, 0)
+        minus_di = np.where(smooth_tr > 0, 100 * smooth_minus / smooth_tr, 0)
+
+        # DX → ADX
+        di_sum = plus_di + minus_di
+        dx = np.where(di_sum > 0, 100 * np.abs(plus_di - minus_di) / di_sum, 0)
+
+    # ADX = DX의 wilder smoothing
+    adx = np.zeros(n)
+    start_idx = period * 2
+    if start_idx < n:
+        adx[start_idx] = dx[period + 1:start_idx + 1].mean()
+        for i in range(start_idx + 1, n):
+            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+
+    adx_val = float(adx[-1])
+    pdi_val = float(plus_di[-1])
+    mdi_val = float(minus_di[-1])
+
+    return {
+        "adx": round(adx_val, 2),
+        "plus_di": round(pdi_val, 2),
+        "minus_di": round(mdi_val, 2),
+        "trending": adx_val >= ADX_THRESHOLD,
+        "trend_direction": "UP" if pdi_val > mdi_val else "DOWN",
+    }
+
+
+# ── 기술적 필터 ────────────────────────────────────────────
+
+def apply_tech_filter(code: str, df: "pd.DataFrame" = None) -> dict:
+    """
+    종목에 기술적 필터 적용:
+    ★ ADX ≥ 25 필수 게이트 (횡보장 진입 방지)
+    1) RSI 50~70 범위 (모멘텀 구간)
+    2) 돈치안 상단 근접 or 돌파
+    3) 거래량 배율 >= VOLUME_SURGE_RATIO
+    + VWAP 위 확인 (보너스)
+
+    Returns: {"code": str, "passed": bool, "rsi": float, ...}
+    """
+    if df is None:
+        df = fetch_ohlcv(code)
+    if df is None or len(df) < DONCHIAN_PERIOD:
+        return {"code": code, "passed": False, "reason": "데이터 부족"}
+
+    # ★ ADX 게이트 (필수) — 추세 존재 + 상승 방향
+    adx_result = calc_adx(df)
+    adx_ok = adx_result["trending"] and adx_result["trend_direction"] == "UP"
+
+    # RSI
+    rsi = calc_rsi(df["Close"])
+    rsi_ok = RSI_LOWER <= rsi <= RSI_UPPER
+
+    # 돈치안
+    donchian = calc_donchian(df, DONCHIAN_PERIOD)
+    donchian_ok = donchian["breakout"] or (
+        donchian["current"] >= donchian["upper"] * DONCHIAN_PROXIMITY_PCT
+    )
+
+    # 거래량
+    vol_ratio = calc_volume_ratio(df)
+    vol_ok = vol_ratio >= VOLUME_SURGE_RATIO
+
+    # VWAP
+    vwap_result = calc_vwap(df)
+    vwap_above = vwap_result["price_above_vwap"]
+
+    # ATR (포지션 관리용으로 함께 계산)
+    atr_value = calc_atr(df)
+
+    # 최소 2개 조건 충족 + ADX 게이트 필수
+    conditions = [rsi_ok, donchian_ok, vol_ok]
+    base_passed = sum(conditions) >= 2
+    passed = adx_ok and base_passed
+
+    return {
+        "code": code,
+        "passed": passed,
+        "adx": adx_result["adx"],
+        "adx_ok": adx_ok,
+        "adx_direction": adx_result["trend_direction"],
+        "rsi": round(rsi, 1),
+        "rsi_ok": rsi_ok,
+        "donchian_breakout": donchian["breakout"],
+        "donchian_near_high": donchian_ok,
+        "vol_ratio": vol_ratio,
+        "vol_ok": vol_ok,
+        "vwap": vwap_result["vwap"],
+        "vwap_above": vwap_above,
+        "vwap_deviation_pct": vwap_result["deviation_pct"],
+        "atr": atr_value,
+        "conditions_met": sum(conditions),
+        "reject_reason": (
+            "ADX < 25 (횡보장)" if not adx_result["trending"]
+            else "ADX 하락추세 (-DI > +DI)" if adx_result["trend_direction"] == "DOWN"
+            else "조건 미달" if not base_passed
+            else None
+        ),
+    }
+
+
+def scan_candidates(codes: list = None) -> list:
+    """
+    후보 종목 전체 스캔 → 기술적 필터 통과 종목 반환
+    codes가 None이면 KOSPI_TOP_CODES 사용
+    """
+    if codes is None:
+        codes = KOSPI_TOP_CODES
+
+    results = []
+    passed = []
+
+    for code in codes:
+        try:
+            result = apply_tech_filter(code)
+            results.append(result)
+            if result["passed"]:
+                passed.append(result)
+        except Exception as e:
+            logger.error(f"{code} 스캔 실패: {e}")
+
+    logger.info(f"스캔 완료: {len(codes)}종목 중 {len(passed)}종목 통과")
+    return passed
+
+
+# ── 테스트 ────────────────────────────────────────────────
 if __name__ == "__main__":
-    import pandas as pd, numpy as np
-    print("=" * 55)
-    print("  QUANTUM FLOW - 스캐너 툴 테스트")
-    print("=" * 55)
-    np.random.seed(42)
-    dates=pd.date_range(end=pd.Timestamp.today(), periods=60, freq="B")
-    c=[70000]
-    for _ in range(59): c.append(int(c[-1]*(1+np.random.normal(0.001,0.015))))
-    df=pd.DataFrame({"open":[int(p*0.99) for p in c],"high":[int(p*1.02) for p in c],
-        "low":[int(p*0.98) for p in c],"close":c,
-        "volume":np.random.randint(500000,3000000,60)}, index=dates)
-    atr=calc_atr(df); rsi=calc_rsi(df); bb=calc_bollinger(df); dc=calc_donchian(df)
-    tp=int(df["high"].tail(20).max()*1.005)
-    r=check_buy_signal("005930",tp,3500000,1000000,12.5,df)
-    print(f"ATR={atr:,.0f}  RSI={rsi:.2f}  매수신호={r['signal']}  점수={r['score']}")
-    print(f"손절가={calc_stop_loss(tp,atr):,.0f}  오버나이트={is_overnight_candidate(tp,int(tp*1.08))}")
-    print("\n  Phase 4 scanner_tools.py - 구현 완료!")
-    print("=" * 55)
+    logging.basicConfig(level=logging.INFO)
+    print("=== Scanner Tools 테스트 ===")
+    # 삼성전자만 테스트
+    result = apply_tech_filter("005930")
+    print(f"삼성전자: {result}")

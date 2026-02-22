@@ -12,3 +12,5 @@ crewai>=0.51.0
 openai>=1.40.0
 pycryptodome>=3.20.0
 feedparser
+chromadb>=0.4.0
+sentence-transformers>=2.2.0

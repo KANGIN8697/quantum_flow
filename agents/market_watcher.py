@@ -406,3 +406,9 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  ✅ MarketWatcher 테스트 완료!")
     print("=" * 60)
+
+
+# Wrapper for main.py compatibility
+async def market_watcher_run():
+    watcher = MarketWatcher()
+    return watcher.run()

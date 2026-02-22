@@ -430,3 +430,9 @@ if __name__ == "__main__":
         print("=" * 60)
 
     asyncio.run(test())
+
+
+# Wrapper for main.py compatibility
+async def market_scanner_run():
+    result = await run_scanner()
+    return {"candidates": result}
