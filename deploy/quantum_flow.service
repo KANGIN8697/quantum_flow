@@ -1,0 +1,46 @@
+# /etc/systemd/system/quantum_flow.service
+# QUANTUM FLOW — systemd 서비스 파일
+#
+# 설치: sudo cp deploy/quantum_flow.service /etc/systemd/system/
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable quantum_flow
+#        sudo systemctl start quantum_flow
+#
+# 로그: journalctl -u quantum_flow -f
+
+[Unit]
+Description=QUANTUM FLOW AI Trading System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/quantum_flow
+EnvironmentFile=/home/ubuntu/quantum_flow/.env
+
+ExecStart=/home/ubuntu/quantum_flow/.venv/bin/python main.py
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# 자동 재시작 (비정상 종료 시)
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# 메모리/CPU 제한 (t3.micro 기준)
+MemoryMax=512M
+CPUQuota=80%
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quantum_flow
+
+# 보안 강화
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

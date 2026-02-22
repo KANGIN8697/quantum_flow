@@ -4,12 +4,53 @@
 
 import os
 import json
+import time
+import threading
 import requests
 from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Token Bucket Rate Limiter ─────────────────────────────────
+# KIS API 제한: 초당 20건 (안전 마진 적용하여 18건/초)
+
+class _TokenBucket:
+    """Thread-safe Token Bucket — API 호출 속도 제한."""
+
+    def __init__(self, rate: float = 18.0, capacity: float = 18.0):
+        self._rate = rate          # 초당 토큰 충전 속도
+        self._capacity = capacity  # 최대 토큰 수
+        self._tokens = capacity
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self, timeout: float = 5.0) -> bool:
+        """
+        토큰 1개를 소비한다. 토큰이 없으면 충전될 때까지 대기.
+        timeout 초 내에 토큰을 얻지 못하면 False 반환.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last_refill
+                self._tokens = min(self._capacity,
+                                   self._tokens + elapsed * self._rate)
+                self._last_refill = now
+
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return True
+
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)  # 50ms 후 재시도
+
+
+_rate_limiter = _TokenBucket(rate=18.0, capacity=18.0)
+
 
 # ── HTTP 세션 풀 (TCP 재사용, 자동 재시도) ──────────────────────
 _RETRY = Retry(total=3, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503])
@@ -122,6 +163,7 @@ def buy_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_BUY), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -186,6 +228,7 @@ def sell_market(code: str, qty: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -246,6 +289,7 @@ def sell_ioc(code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_SELL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -314,6 +358,7 @@ def cancel_order(order_no: str, code: str, qty: int, price: int) -> dict:
 
     timestamp = datetime.now().isoformat()
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.post(url, headers=_headers(TR_CANCEL), json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -383,6 +428,7 @@ def get_balance() -> dict:
     }
 
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.get(url, headers=_headers(TR_BALANCE), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -453,6 +499,7 @@ def get_order_status(order_no: str) -> dict:
     }
 
     try:
+        _rate_limiter.acquire()
         resp = _SESSION.get(url, headers=_headers(TR_ORDERS), params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
