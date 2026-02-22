@@ -51,10 +51,32 @@ SYSTEM_PROMPT = """당신은 한국 주식시장 전문 거시경제 분석가�
   "confidence": 0~100 (판단 확신도),
   "sectors": ["추천섹터1", "추천섹터2"],
   "avoid_sectors": ["회피섹터1"],
+  "sector_multipliers": {
+    "반도체": 1.0,
+    "2차전지": 1.0,
+    "바이오": 1.0,
+    "자동차": 1.0,
+    "금융": 1.0,
+    "철강": 1.0,
+    "IT": 1.0,
+    "화학": 1.0,
+    "건설": 1.0,
+    "에너지": 1.0
+  },
   "report": "3페이지 분량의 상세 보고서 (마크다운 형식)",
   "summary": "3줄 요약",
   "urgent_action": "NONE" 또는 "REDUCE" 또는 "EXIT_ALL"
 }
+
+sector_multipliers 작성 규칙:
+- 각 섹터의 가중치를 0.5 ~ 1.5 범위에서 결정하세요.
+- 기본값은 1.0이며, 거시경제 상황에 따라 조정합니다.
+- 기본 규칙 (USD/KRW 기반):
+  * USD/KRW >= 1400원: 수출주(반도체,자동차,IT) 1.2, 내수주(건설,금융) 0.8
+  * USD/KRW >= 1350원: 수출주 1.1, 내수주 0.9
+  * USD/KRW <= 1250원: 수출주 0.9, 내수주 1.1
+- 위 기본 규칙에서 ±0.1 범위로 미세조정할 수 있습니다.
+- 글로벌 유가 급등 시 에너지/화학 상향, 바이오는 거시에 덜 민감하므로 1.0 유지.
 
 보고서(report)는 반드시 다음 구조를 따르세요:
 
@@ -178,6 +200,36 @@ async def analyze_with_gpt(macro_data: dict, news_list: list, urgent_info: dict)
         return _default_analysis(reason)
 
 
+def _validate_sector_multipliers(raw: dict) -> dict:
+    """
+    [기능6] LLM이 생성한 섹터 멀티플라이어를 검증하고 클리핑.
+    - dict가 아니면 빈 dict 반환
+    - 값이 0.5~1.5 범위를 벗어나면 클리핑
+    - 숫자가 아닌 값은 기본값 1.0으로 대체
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    try:
+        from config.settings import (
+            SECTOR_MULTIPLIER_MIN, SECTOR_MULTIPLIER_MAX, SECTOR_MULTIPLIER_DEFAULT,
+        )
+    except ImportError:
+        SECTOR_MULTIPLIER_MIN = 0.5
+        SECTOR_MULTIPLIER_MAX = 1.5
+        SECTOR_MULTIPLIER_DEFAULT = 1.0
+
+    validated = {}
+    for sector, mult in raw.items():
+        try:
+            val = float(mult)
+            val = max(SECTOR_MULTIPLIER_MIN, min(val, SECTOR_MULTIPLIER_MAX))
+            validated[sector] = round(val, 2)
+        except (ValueError, TypeError):
+            validated[sector] = SECTOR_MULTIPLIER_DEFAULT
+    return validated
+
+
 def _default_analysis(reason: str) -> dict:
     """기본 분석 결과 (폴백)"""
     return {
@@ -273,19 +325,74 @@ async def run_macro_analysis() -> dict:
     
     # 4) shared_state 업데이트
     risk_label = analysis.get("risk", "ON")
+    confidence = analysis.get("confidence", 50)
+    urgent_action = analysis.get("urgent_action", "NONE")
+
     set_state("macro_risk", risk_label)
     set_state("macro_sectors", analysis.get("sectors", []))
-    set_state("macro_urgent", analysis.get("urgent_action", "NONE"))
-    set_state("macro_confidence", analysis.get("confidence", 50))
+    set_state("macro_avoid_sectors", analysis.get("avoid_sectors", []))
+    set_state("macro_urgent", urgent_action)
+    set_state("macro_confidence", confidence)
+
+    # head_strategist가 참조하는 macro_result 생성
+    # confidence → position_size_pct 매핑, risk/urgent → strategy 매핑
+    if risk_label == "OFF" or urgent_action == "EXIT_ALL":
+        macro_strategy = "방어적"
+        macro_position_pct = 0.0
+    elif urgent_action == "REDUCE" or confidence < 40:
+        macro_strategy = "방어적"
+        macro_position_pct = 0.3
+    elif confidence >= 70:
+        macro_strategy = "공격적"
+        macro_position_pct = 0.8
+    elif confidence >= 55:
+        macro_strategy = "중립"
+        macro_position_pct = 0.6
+    else:
+        macro_strategy = "중립"
+        macro_position_pct = 0.5
+
+    set_state("macro_result", {
+        "strategy": macro_strategy,
+        "position_size_pct": macro_position_pct,
+        "sectors": analysis.get("sectors", []),
+        "avoid_sectors": analysis.get("avoid_sectors", []),
+        "confidence": confidence,
+        "risk": risk_label,
+    })
+
+    # [기능6] 섹터 멀티플라이어 저장 (검증 + 클리핑)
+    raw_multipliers = analysis.get("sector_multipliers", {})
+    validated_multipliers = _validate_sector_multipliers(raw_multipliers)
+    set_state("sector_multipliers", validated_multipliers)
+    if validated_multipliers:
+        non_default = {k: v for k, v in validated_multipliers.items() if v != 1.0}
+        if non_default:
+            print(f"  📊 섹터 멀티플라이어: {non_default}")
     
     if risk_label == "OFF":
-        update_risk_params({"position_pct": 0.5})  # 포지션 축소
-    
+        set_state("risk_off", True)
+        update_risk_params({
+            "risk_level": "HIGH",
+            "position_pct": 0.5,
+            "pyramiding_allowed": False,
+        })
+
     if analysis.get("urgent_action") == "EXIT_ALL":
+        set_state("risk_off", True)
         set_state("force_exit", True)
+        update_risk_params({
+            "risk_level": "CRITICAL",
+            "emergency_liquidate": True,
+            "pyramiding_allowed": False,
+        })
         print("  🚨🚨 긴급 전량 청산 시그널 발생!")
     elif analysis.get("urgent_action") == "REDUCE":
-        update_risk_params({"position_pct": 0.3})
+        update_risk_params({
+            "risk_level": "HIGH",
+            "position_pct": 0.3,
+            "pyramiding_allowed": False,
+        })
         print("  ⚠ 포지션 축소 시그널 발생")
     
     # 5) 결과 조립
@@ -316,6 +423,26 @@ async def run_macro_analysis() -> dict:
     print(f"{'='*55}")
     
     return result
+
+
+# ── main.py 진입점 ────────────────────────────────────────
+
+async def macro_analyst_run() -> dict:
+    """
+    main.py에서 호출하는 거시경제 분석 진입점.
+    run_macro_analysis()를 실행하고 main.py가 기대하는 형식으로 반환.
+    """
+    result = await run_macro_analysis()
+    analysis = result.get("analysis", {})
+    return {
+        "risk_status": analysis.get("risk", "ON"),
+        "confidence": analysis.get("confidence", 50),
+        "sectors": analysis.get("sectors", []),
+        "avoid_sectors": analysis.get("avoid_sectors", []),
+        "urgent_action": analysis.get("urgent_action", "NONE"),
+        "summary": analysis.get("summary", ""),
+        "raw": result,
+    }
 
 
 # ── 테스트 블록 ──────────────────────────────────────────
