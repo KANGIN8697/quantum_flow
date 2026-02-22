@@ -436,36 +436,38 @@ async def run_scanner(round_label: str = "1차") -> list:
         print("  ⚠️  필터 결과 부족 → 원본 상위 30종목 사용")
         filtered = candidates[:30]
 
-        # 2.5 주가 상승 지표 평가 (stock_eval)
-        print(f"  📊 종목 평가 진행 중 ({len(filtered)}종목)...")
-        try:
-            macro_state = get_state("macro_result") or {}
-            sector_multipliers = get_state("sector_multipliers") or {}
-            macro_sectors = {
-                "sectors": macro_state.get("sectors", []),
-                "avoid_sectors": macro_state.get("avoid_sectors", []),
-                "sector_multipliers": sector_multipliers,
-            }
-            eval_codes = [c["code"] for c in filtered]
-            eval_results = evaluate_multiple(eval_codes, macro_sectors)
-            # 평가 결과를 filtered에 매핑
-            eval_map = {r["code"]: r for r in eval_results}
-            for c in filtered:
-                ev = eval_map.get(c["code"], {})
-                c["eval_grade"] = ev.get("grade", "?")
-                c["eval_score"] = ev.get("total_score", 0)
-                c["eval_action"] = ev.get("action", "")
-                c["position_pct"] = ev.get("position_pct", 0.5)
-            # D/F 등급 필터링
-            before_cnt = len(filtered)
-            filtered = [c for c in filtered if c.get("eval_grade") not in ("D", "F")]
-            filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
-            print(f"  ✅ 평가 완료: {before_cnt}→{len(filtered)}종목 (D/F 제외)")
-            for c in filtered[:5]:
-                print(f"     {c['code']} [{c.get('eval_grade','?')}] score={c.get('eval_score',0)}")
-        except Exception as e:
-            print(f"  ⚠️ 종목 평가 스킵: {e}")
-
+    # 2.5 주가 상승 지표 평가 (stock_eval) — 모든 필터 결과에 대해 실행
+    print(f"  📊 종목 평가 진행 중 ({len(filtered)}종목)...")
+    try:
+        macro_sectors_list = get_state("macro_sectors") or []
+        avoid_sectors_list = get_state("macro_avoid_sectors") or []
+        sector_multipliers = get_state("sector_multipliers") or {}
+        macro_sectors = {
+            "sectors": macro_sectors_list,
+            "avoid_sectors": avoid_sectors_list,
+            "sector_multipliers": sector_multipliers,
+        }
+        eval_codes = [c["code"] for c in filtered]
+        eval_results = evaluate_multiple(eval_codes, macro_sectors)
+        # 평가 결과를 filtered에 매핑
+        eval_map = {r["code"]: r for r in eval_results}
+        for c in filtered:
+            ev = eval_map.get(c["code"], {})
+            c["eval_grade"] = ev.get("grade", "?")
+            c["eval_score"] = ev.get("total_score", 0)
+            c["eval_action"] = ev.get("action", "")
+            c["position_pct"] = ev.get("position_pct", 0.5)
+            c["sector"] = ev.get("details", {}).get("sector", {}).get("sector", "")
+            c["entry_atr"] = 0  # ATR은 실시간 데이터에서 채워짐
+        # D/F 등급 필터링
+        before_cnt = len(filtered)
+        filtered = [c for c in filtered if c.get("eval_grade") not in ("D", "F")]
+        filtered.sort(key=lambda x: x.get("eval_score", 0), reverse=True)
+        print(f"  ✅ 평가 완료: {before_cnt}→{len(filtered)}종목 (D/F 제외)")
+        for c in filtered[:5]:
+            print(f"     {c['code']} [{c.get('eval_grade','?')}] score={c.get('eval_score',0)}")
+    except Exception as e:
+        print(f"  ⚠️ 종목 평가 스킵: {e}")
 
     # 2.7 [기능2] 섹터 Momentum Delta 캐싱/적용
     _apply_sector_momentum_delta(filtered, round_label)
@@ -481,6 +483,21 @@ async def run_scanner(round_label: str = "1차") -> list:
 
     # 4. shared_state 업데이트
     set_state("watch_list", watch_list)
+
+    # 4.5 평가 결과를 shared_state에 저장 (head_strategist가 참조)
+    filtered_map = {c["code"]: c for c in filtered}
+    scanner_selected = []
+    for code in watch_list:
+        info = filtered_map.get(code, {})
+        scanner_selected.append({
+            "code": code,
+            "eval_grade": info.get("eval_grade", "?"),
+            "eval_score": info.get("eval_score", 0),
+            "position_pct": info.get("position_pct", 0.5),
+            "sector": info.get("sector", ""),
+            "entry_atr": info.get("entry_atr", 0),
+        })
+    set_state("scanner_result", {"selected": scanner_selected})
 
     preview = watch_list[:5]
     more    = f"... 외 {len(watch_list)-5}개" if len(watch_list) > 5 else ""

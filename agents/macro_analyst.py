@@ -325,10 +325,41 @@ async def run_macro_analysis() -> dict:
     
     # 4) shared_state 업데이트
     risk_label = analysis.get("risk", "ON")
+    confidence = analysis.get("confidence", 50)
+    urgent_action = analysis.get("urgent_action", "NONE")
+
     set_state("macro_risk", risk_label)
     set_state("macro_sectors", analysis.get("sectors", []))
-    set_state("macro_urgent", analysis.get("urgent_action", "NONE"))
-    set_state("macro_confidence", analysis.get("confidence", 50))
+    set_state("macro_avoid_sectors", analysis.get("avoid_sectors", []))
+    set_state("macro_urgent", urgent_action)
+    set_state("macro_confidence", confidence)
+
+    # head_strategist가 참조하는 macro_result 생성
+    # confidence → position_size_pct 매핑, risk/urgent → strategy 매핑
+    if risk_label == "OFF" or urgent_action == "EXIT_ALL":
+        macro_strategy = "방어적"
+        macro_position_pct = 0.0
+    elif urgent_action == "REDUCE" or confidence < 40:
+        macro_strategy = "방어적"
+        macro_position_pct = 0.3
+    elif confidence >= 70:
+        macro_strategy = "공격적"
+        macro_position_pct = 0.8
+    elif confidence >= 55:
+        macro_strategy = "중립"
+        macro_position_pct = 0.6
+    else:
+        macro_strategy = "중립"
+        macro_position_pct = 0.5
+
+    set_state("macro_result", {
+        "strategy": macro_strategy,
+        "position_size_pct": macro_position_pct,
+        "sectors": analysis.get("sectors", []),
+        "avoid_sectors": analysis.get("avoid_sectors", []),
+        "confidence": confidence,
+        "risk": risk_label,
+    })
 
     # [기능6] 섹터 멀티플라이어 저장 (검증 + 클리핑)
     raw_multipliers = analysis.get("sector_multipliers", {})

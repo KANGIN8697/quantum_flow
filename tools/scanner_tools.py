@@ -211,29 +211,28 @@ def calc_holding_days(entry_time_str):
     15:30 이전 진입 → 당일을 Day 1로 카운트.
     15:30 이후 진입 → 익일을 Day 1로 카운트.
     """
+    from datetime import timedelta as _td
     try:
         entry_dt = datetime.fromisoformat(entry_time_str)
     except (ValueError, TypeError):
         return 1
 
     now = datetime.now()
-    # 장 마감 시각(15:30) 기준으로 날짜 보정
     market_close_hour = 15
     market_close_min = 30
 
     # 진입일 기준일 결정
-    if entry_dt.hour > market_close_hour or (entry_dt.hour == market_close_hour and entry_dt.minute >= market_close_min):
-        entry_base = entry_dt.date()  # 진입일은 카운트 안 함
-    else:
-        entry_base = entry_dt.date()
+    after_close = (entry_dt.hour > market_close_hour or
+                   (entry_dt.hour == market_close_hour and entry_dt.minute >= market_close_min))
 
-    # 현재 기준일 결정
+    entry_base = entry_dt.date()
     current_base = now.date()
 
     # 영업일 차이 (주말 제외 간이 계산)
     delta = (current_base - entry_base).days
     if delta <= 0:
         return 1
+
     # 주말 제외 (간이): 총 일수에서 주말 수 빼기
     weeks = delta // 7
     remainder = delta % 7
@@ -244,7 +243,13 @@ def calc_holding_days(entry_time_str):
         if d >= 5:  # 토(5), 일(6)
             weekend_days += 1
     biz_days = delta - weekend_days
-    return max(biz_days, 1)
+
+    if after_close:
+        # 장 마감 이후 진입: 익일부터 Day 1 → biz_days 그대로 사용
+        return max(biz_days, 1)
+    else:
+        # 장중 진입: 당일이 Day 1 → 영업일 차이에 +1
+        return max(biz_days + 1, 1)
 
 
 def calc_pyramid_stop(avg_price):
