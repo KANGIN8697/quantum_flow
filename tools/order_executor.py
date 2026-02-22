@@ -11,6 +11,18 @@ from requests.adapters import HTTPAdapter, Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
 load_dotenv()
 
 # ── Token Bucket Rate Limiter ─────────────────────────────────
@@ -441,8 +453,8 @@ def get_balance() -> dict:
             qty = int(item.get("hldg_qty", 0))
             if qty == 0:
                 continue
-            avg_price = float(item.get("pchs_avg_pric", 0))
-            current_price = float(item.get("prpr", 0))
+            avg_price = safe_float(item.get("pchs_avg_pric", 0))
+            current_price = safe_float(item.get("prpr", 0))
             pnl_pct = (
                 (current_price - avg_price) / avg_price * 100
                 if avg_price > 0 else 0.0
@@ -457,8 +469,8 @@ def get_balance() -> dict:
             })
 
         summary = output2[0] if output2 else {}
-        cash = int(float(summary.get("dnca_tot_amt", 0)))
-        total_eval = int(float(summary.get("tot_evlu_amt", 0)))
+        cash = int(safe_float(summary.get("dnca_tot_amt", 0)))
+        total_eval = int(safe_float(summary.get("tot_evlu_amt", 0)))
 
         print(f"  💰 [{MODE_LABEL}] 잔고조회 완료: 예수금 {cash:,}원  보유{len(positions)}종목  총평가 {total_eval:,}원")
         return {
@@ -512,7 +524,7 @@ def get_order_status(order_no: str) -> dict:
         filled_qty    = int(item.get("tot_ccld_qty", 0))
         order_qty     = int(item.get("ord_qty", 0))
         remaining_qty = order_qty - filled_qty
-        avg_fill_price = int(float(item.get("avg_prvs", 0)))
+        avg_fill_price = int(safe_float(item.get("avg_prvs", 0)))
 
         if remaining_qty == 0 and filled_qty > 0:
             status = "FILLED"

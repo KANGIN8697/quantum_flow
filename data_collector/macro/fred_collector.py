@@ -8,6 +8,18 @@ import requests
 from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
 load_dotenv()
 
 logger = logging.getLogger("fred_collector")
@@ -77,7 +89,7 @@ def fetch_fred_series(series_id: str, days_back: int = 10) -> dict:
             if o["value"] != ".":
                 result = {
                     "series_id": series_id,
-                    "value": float(o["value"]),
+                    "value": safe_float(o["value"]),
                     "date": o["date"],
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -142,7 +154,7 @@ def fetch_fred_time_series(series_id: str, days_back: int = 365) -> list:
             if o["value"] != ".":
                 time_series.append({
                     "date": o["date"],
-                    "value": float(o["value"]),
+                    "value": safe_float(o["value"]),
                 })
 
         return time_series

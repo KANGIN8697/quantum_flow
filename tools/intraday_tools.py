@@ -100,10 +100,10 @@ def fetch_intraday_candles(
             try:
                 candle = {
                     "time": row.get("stck_cntg_hour", ""),
-                    "open": float(row.get("stck_oprc", 0)),
-                    "high": float(row.get("stck_hgpr", 0)),
-                    "low": float(row.get("stck_lwpr", 0)),
-                    "close": float(row.get("stck_prpr", 0)),
+                    "open": safe_float(row.get("stck_oprc", 0)),
+                    "high": safe_float(row.get("stck_hgpr", 0)),
+                    "low": safe_float(row.get("stck_lwpr", 0)),
+                    "close": safe_float(row.get("stck_prpr", 0)),
                     "volume": int(row.get("cntg_vol", 0)),
                 }
                 if candle["close"] > 0:
@@ -209,6 +209,18 @@ def analyze_60m_trend(code: str) -> dict:
         }
     """
     from config.settings import INTRADAY_60M_BARS
+
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
 
     candles = fetch_intraday_candles(code, interval_minutes=60, count=INTRADAY_60M_BARS)
 

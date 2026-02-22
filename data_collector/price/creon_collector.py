@@ -194,10 +194,10 @@ def fetch_minute_bars(ticker: str, timeframe: int = 5,
             all_rows.append({
                 "datetime": dt_iso,
                 "ticker": ticker,
-                "open": float(chart.GetDataValue(2, i)),
-                "high": float(chart.GetDataValue(3, i)),
-                "low": float(chart.GetDataValue(4, i)),
-                "close": float(chart.GetDataValue(5, i)),
+                "open": safe_float(chart.GetDataValue(2, i)),
+                "high": safe_float(chart.GetDataValue(3, i)),
+                "low": safe_float(chart.GetDataValue(4, i)),
+                "close": safe_float(chart.GetDataValue(5, i)),
                 "volume": int(chart.GetDataValue(6, i)),
             })
 
@@ -303,6 +303,18 @@ def _notify_completion(total_rows: int, elapsed: float):
 
 if __name__ == "__main__":
     import argparse
+
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(name)s] %(message)s")
 

@@ -8,6 +8,18 @@ import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
 load_dotenv()
 
 logger = logging.getLogger("kis_daily_collector")
@@ -118,7 +130,7 @@ def fetch_daily_price(code: str, days_back: int = 30) -> list:
                     "close": int(item["stck_clpr"]),
                     "volume": int(item["acml_vol"]),
                     "change": int(item["prdy_vrss"]),
-                    "change_pct": float(item["prdy_ctrt"]),
+                    "change_pct": safe_float(item["prdy_ctrt"]),
                 })
             except (KeyError, ValueError) as e:
                 logger.warning(f"일봉 데이터 파싱 오류: {e}")

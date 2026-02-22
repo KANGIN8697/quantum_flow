@@ -7,6 +7,18 @@ import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
 load_dotenv()
 
 try:
@@ -66,8 +78,8 @@ def fetch_global_price(symbol_key: str, period: str = "1d") -> dict:
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
 
-        close = float(latest["Close"])
-        prev_close = float(prev["Close"])
+        close = safe_float(latest["Close"])
+        prev_close = safe_float(prev["Close"])
         change = close - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0
 
@@ -119,10 +131,10 @@ def fetch_historical_global(symbol_key: str, days: int = 30) -> list:
         for idx, row in df.iterrows():
             data.append({
                 "date": str(idx.date()),
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
+                "open": safe_float(row["Open"]),
+                "high": safe_float(row["High"]),
+                "low": safe_float(row["Low"]),
+                "close": safe_float(row["Close"]),
                 "volume": int(row["Volume"]) if "Volume" in row else 0,
             })
 

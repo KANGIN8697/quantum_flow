@@ -11,6 +11,18 @@ from datetime import datetime
 import websockets
 from dotenv import load_dotenv
 
+def safe_float(val, default=0.0):
+    """pandas Series/numpy -> float safely"""
+    try:
+        if hasattr(val, 'iloc'):
+            val = val.iloc[-1]
+        if hasattr(val, 'item'):
+            return safe_float(val.item())
+        return safe_float(val)
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
 load_dotenv()
 
 USE_PAPER = os.getenv("USE_PAPER", "true").lower() == "true"
@@ -164,7 +176,7 @@ class KISWebSocketFeeder:
             return 0.0
         now = time.time()
         recent = [t for t in self._tick_timestamps[code] if now - t <= 1.0]
-        return float(len(recent))
+        return safe_float(len(recent))
 
 
 if __name__ == "__main__":
