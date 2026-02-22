@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 outputs/reports/*.json
 outputs/reports/*.log
+outputs/dashboards/*.png
+outputs/token_cache.json
 .venv/
 *.egg-info/
 dist/
