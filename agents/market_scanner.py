@@ -138,7 +138,7 @@ def fetch_volume_top(top_n: int = 50) -> list:
                 "name":       item.get("hts_kor_isnm", code),
                 "volume":     int(item.get("acml_vol", 0) or 0),
                 "price":      int(item.get("stck_prpr", 0) or 0),
-                "change_pct": float(item.get("prdy_ctrt", 0) or 0),
+                "change_pct": safe_float(item.get("prdy_ctrt", 0) or 0),
             })
 
         print(f"  KIS 거래량 상위 {len(result)}종목 수집")
@@ -172,10 +172,10 @@ def _fetch_ohlcv(code: str, period: int = 25) -> object:
         rows = []
         for item in (data.get("output2") or [])[:period]:
             rows.append({
-                "open":   float(item.get("stck_oprc", 0) or 0),
-                "high":   float(item.get("stck_hgpr", 0) or 0),
-                "low":    float(item.get("stck_lwpr", 0) or 0),
-                "close":  float(item.get("stck_clpr", 0) or 0),
+                "open":   safe_float(item.get("stck_oprc", 0) or 0),
+                "high":   safe_float(item.get("stck_hgpr", 0) or 0),
+                "low":    safe_float(item.get("stck_lwpr", 0) or 0),
+                "close":  safe_float(item.get("stck_clpr", 0) or 0),
                 "volume": int(item.get("acml_vol", 0) or 0),
             })
         if len(rows) < 5:

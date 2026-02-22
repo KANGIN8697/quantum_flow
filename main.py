@@ -259,7 +259,7 @@ async def job_overnight_check():
                         "손절", f"종가 {closing_price:,.0f} 대비 {change_pct:+.1f}%",
                     )
                 except Exception as e:
-                    pass
+                    logger.debug(f"suppressed: {e}")
             except Exception as e:
                 logger.error(f"오버나이트 손절 실패 ({code}): {e}")
         else:
