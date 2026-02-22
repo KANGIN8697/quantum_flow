@@ -438,7 +438,6 @@ def create_and_send_weekly_dashboard():
                 daily_summaries.append(s)
 
         filepath = generate_weekly_dashboard(weekly_stats, daily_summaries)
-        from tools.notifier_tools import notify_dashboard
         notify_dashboard(filepath, "주별")
         return filepath
     except Exception as e:

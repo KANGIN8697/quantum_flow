@@ -20,7 +20,6 @@ def safe_float(val, default=0.0):
 
 def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
     """yfinance download with retry logic"""
-    import time
     for attempt in range(retries):
         try:
             data = safe_yf_download(ticker, period=period, interval=interval,
@@ -478,7 +477,6 @@ class MarketWatcher:
             return True
 
         try:
-            from openai import OpenAI
             client = OpenAI(api_key=OPENAI_API_KEY)
 
             risk_off_time = get_state("risk_off_time") or "불명"

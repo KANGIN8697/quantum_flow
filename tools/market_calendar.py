@@ -113,7 +113,6 @@ def market_time_label(now: datetime = None) -> str:
         now = datetime.now(KST)
     if not is_market_open_day(now.date()):
         return "CLOSED"
-    from datetime import time as dtime
     t = now.time()
     if t < dtime(9, 0):
         return "PRE_MARKET"

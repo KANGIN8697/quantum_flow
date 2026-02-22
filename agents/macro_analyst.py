@@ -479,7 +479,6 @@ async def test():
         print(f"  긴급조치: {a.get('urgent_action', 'NONE')}")
     except Exception as e:
         print(f"  ❌ 파이프라인 오류: {e}")
-        import traceback
         traceback.print_exc()
     
     print("\n" + "=" * 60)

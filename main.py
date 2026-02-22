@@ -302,9 +302,6 @@ async def job_force_close():
     print("15:20 장마감 판단 (청산 or 오버나이트)")
     print("─" * 40)
 
-    from tools.order_executor import sell_market, get_balance
-    from tools.trade_logger import log_trade
-    from tools.notifier_tools import notify_trade_decision
     from tools.scanner_tools import evaluate_overnight
 
     # 종목별 OHLCV 데이터 로드 시도
@@ -361,7 +358,6 @@ async def job_force_close():
             stop_loss = eval_result["stop_loss"]
 
             # 포지션에 오버나이트 정보 기록
-            from shared_state import update_position
             update_position(code, {
                 "overnight": True,
                 "overnight_score": score,
