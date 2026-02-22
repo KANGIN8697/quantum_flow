@@ -7,10 +7,11 @@
 #   05:50  토큰 갱신
 #   08:30  Agent 1: 거시경제 분석
 #   08:50  Agent 2: 종목 스캔 (1차)
+#   09:02  오버나이트 포지션 손절 체크 (종가 기준)
 #   09:05  Agent 3: 전략 결정
 #   09:10  Agent 4: 시장 감시 시작
 #   11:30  Agent 2: 종목 스캔 (2차)
-#   15:20  강제 청산 (모든 보유 포지션)
+#   15:20  장마감 판단 (오버나이트 종합 평가 → 홀딩 or 청산)
 #   15:35  일별 대시보드 + 리포트
 #   15:35  주별 대시보드 (금요일만)
 #   23:00  토큰 갱신 (이중 안전)
@@ -196,6 +197,74 @@ async def job_strategy_decision():
         print("  ⚠️ head_strategist 비활성화")
 
 
+async def job_overnight_check():
+    """
+    09:05 오버나이트 포지션 손절 체크.
+    전일 종가 기준 손절가 이하면 즉시 시장가 매도.
+    """
+    if not is_market_open_day():
+        return
+    positions = get_positions()
+    overnight_positions = {
+        code: data for code, data in positions.items()
+        if data.get("overnight")
+    }
+    if not overnight_positions:
+        return
+
+    print(f"\n{'─'*40}")
+    print("오버나이트 포지션 손절 체크")
+    print("─" * 40)
+
+    from tools.order_executor import sell_market, get_balance
+    from tools.trade_logger import log_trade
+    from tools.notifier_tools import notify_trade_decision
+
+    # 현재 잔고에서 실시간 가격 가져오기
+    try:
+        balance = get_balance()
+        price_map = {p["code"]: p["current_price"] for p in balance.get("positions", [])}
+    except Exception:
+        price_map = {}
+
+    for code, data in overnight_positions.items():
+        stop_price = data.get("overnight_stop", 0)
+        closing_price = data.get("closing_price", 0)
+        current_price = price_map.get(code, 0)
+
+        if current_price <= 0:
+            logger.warning(f"  {code}: 현재가 조회 불가 — 손절 체크 스킵")
+            continue
+
+        print(f"  {code}: 현재 {current_price:,.0f}원 / 종가 {closing_price:,.0f}원 / 손절선 {stop_price:,.0f}원")
+
+        if current_price <= stop_price:
+            # ── 손절 실행 ──
+            print(f"    → 손절 발동! (종가 대비 {(current_price/closing_price - 1)*100:+.1f}%)")
+            try:
+                result = sell_market(code, qty=0)
+                log_trade("OVERNIGHT_STOP", code,
+                          reason=f"익일 손절 (종가 {closing_price:,.0f} → {current_price:,.0f})",
+                          position_pct=data.get("entry_pct", 0))
+                remove_position(code)
+
+                try:
+                    notify_trade_decision(
+                        "OVERNIGHT_STOP", code,
+                        data.get("entry_pct", 0), data.get("overnight_grade", "?"),
+                        "손절", f"종가 {closing_price:,.0f} 대비 {(current_price/closing_price-1)*100:+.1f}%",
+                    )
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"오버나이트 손절 실패 ({code}): {e}")
+        else:
+            # 오버나이트 플래그 해제 (정상 진행)
+            from shared_state import update_position
+            update_position(code, {"overnight": False})
+            print(f"    → 정상 (오버나이트 트랙 해제, 일반 감시 전환)")
+
+
 def job_market_watcher_start():
     """Agent 4: 시장 감시 시작 (09:10) — 별도 스레드"""
     if not is_market_open_day():
@@ -213,7 +282,11 @@ def job_market_watcher_stop():
 
 
 async def job_force_close():
-    """15:20 강제 청산 — 모든 보유 포지션을 시장가 매도"""
+    """
+    15:20 강제 청산 — 종목별 오버나이트 종합 평가 후 분기.
+    - 오버나이트 합격 (60점+) → 홀딩 (종가 기준 손절가 설정)
+    - 오버나이트 불합격       → 시장가 매도
+    """
     if not is_market_open_day():
         return
     positions = get_positions()
@@ -222,35 +295,116 @@ async def job_force_close():
         return
 
     print(f"\n{'─'*40}")
-    print("15:20 강제 청산")
+    print("15:20 장마감 판단 (청산 or 오버나이트)")
     print("─" * 40)
 
-    from tools.order_executor import sell_market
+    from tools.order_executor import sell_market, get_balance
     from tools.trade_logger import log_trade
     from tools.notifier_tools import notify_trade_decision
+    from tools.scanner_tools import evaluate_overnight
+
+    # 종목별 OHLCV 데이터 로드 시도
+    def _load_ohlcv(code):
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(f"{code}.KS")
+            df = ticker.history(period="3mo")
+            df.columns = [c.lower() for c in df.columns]
+            return df
+        except Exception:
+            return None
+
+    overnight_held = []  # 오버나이트 홀딩 종목
+    closed = []          # 청산 종목
 
     for code, data in list(positions.items()):
-        try:
-            # 실제 매도 주문
-            result = sell_market(code, qty=0)  # qty=0 → 전량
-            log_trade("FORCE_CLOSE", code,
-                      reason="15:20 장중 강제 청산",
-                      position_pct=data.get("entry_pct", 0))
-            remove_position(code)
+        entry_price = data.get("entry_price", data.get("avg_price", 0))
+        current_price = data.get("current_price", 0)
+
+        # 잔고에서 현재가 갱신 시도
+        if current_price <= 0:
+            try:
+                balance = get_balance()
+                for pos in balance.get("positions", []):
+                    if pos["code"] == code:
+                        current_price = pos["current_price"]
+                        break
+            except Exception:
+                pass
+
+        # OHLCV 로드 + 오버나이트 종합 평가
+        df = _load_ohlcv(code)
+        eval_result = evaluate_overnight(code, entry_price, current_price, df)
+
+        hold = eval_result["hold"]
+        score = eval_result["score"]
+        grade = eval_result["grade"]
+        bd = eval_result["breakdown"]
+
+        print(f"\n  [{code}] 오버나이트 평가: {score}점 (등급 {grade})")
+        print(f"    수익률: {bd['profit']['score']}/{bd['profit']['max']} — {bd['profit']['reason']}")
+        print(f"    뉴  스: {bd['news']['score']}/{bd['news']['max']} — {bd['news']['reason']}")
+        print(f"    추  세: {bd['trend']['score']}/{bd['trend']['max']} — {bd['trend']['reason']}")
+        print(f"    거래량: {bd['volume']['score']}/{bd['volume']['max']} — {bd['volume']['reason']}")
+
+        if hold:
+            # ── 오버나이트 홀딩 ──
+            closing_price = eval_result["closing_price"]
+            stop_loss = eval_result["stop_loss"]
+
+            # 포지션에 오버나이트 정보 기록
+            from shared_state import update_position
+            update_position(code, {
+                "overnight": True,
+                "overnight_score": score,
+                "overnight_grade": grade,
+                "closing_price": closing_price,
+                "overnight_stop": stop_loss,
+                "overnight_date": datetime.now(KST).strftime("%Y-%m-%d"),
+            })
+            overnight_held.append(code)
+
+            print(f"    → 오버나이트 홀딩 (종가 {closing_price:,.0f}원 / 손절 {stop_loss:,.0f}원)")
 
             try:
                 notify_trade_decision(
-                    "FORCE_CLOSE", code,
-                    data.get("entry_pct", 0), data.get("eval_grade", "?"),
-                    "강제청산", "15:20 장마감 강제 청산",
+                    "OVERNIGHT_HOLD", code,
+                    data.get("entry_pct", 0), grade,
+                    "오버나이트", f"종합 {score}점 | 종가 {closing_price:,.0f} | 손절 {stop_loss:,.0f}",
                 )
             except Exception:
                 pass
 
-            status = "성공" if result.get("success") else "실패"
-            print(f"  {code}: 강제 청산 {status}")
-        except Exception as e:
-            logger.error(f"강제 청산 실패 ({code}): {e}")
+        else:
+            # ── 강제 청산 ──
+            try:
+                result = sell_market(code, qty=0)
+                log_trade("FORCE_CLOSE", code,
+                          reason=f"15:20 청산 (오버나이트 {score}점, 등급 {grade})",
+                          position_pct=data.get("entry_pct", 0))
+                remove_position(code)
+                closed.append(code)
+
+                status = "성공" if result.get("success") else "실패"
+                print(f"    → 강제 청산 {status}")
+
+                try:
+                    notify_trade_decision(
+                        "FORCE_CLOSE", code,
+                        data.get("entry_pct", 0), grade,
+                        "강제청산", f"오버나이트 불합격 ({score}점)",
+                    )
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.error(f"강제 청산 실패 ({code}): {e}")
+
+    # 요약
+    print(f"\n  {'─'*30}")
+    print(f"  청산: {len(closed)}종목  |  오버나이트 홀딩: {len(overnight_held)}종목")
+    if overnight_held:
+        print(f"  홀딩 종목: {', '.join(overnight_held)}")
 
 
 async def job_daily_report():
@@ -327,6 +481,10 @@ async def run_scheduler():
                       id="market_scan_1", name="Agent2 종목스캔 1차")
     scheduler.add_job(job_market_scan, CronTrigger(hour=11, minute=30),
                       id="market_scan_2", name="Agent2 종목스캔 2차")
+
+    # 오버나이트 포지션 손절 체크 (09:02, 장 시작 직후)
+    scheduler.add_job(job_overnight_check, CronTrigger(hour=9, minute=2),
+                      id="overnight_check", name="오버나이트 손절체크")
 
     # Agent 3: 전략 결정
     scheduler.add_job(job_strategy_decision, CronTrigger(hour=9, minute=5),

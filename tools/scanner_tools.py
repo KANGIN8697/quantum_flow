@@ -258,10 +258,317 @@ def calc_pyramid_stop(avg_price):
 
 
 def is_overnight_candidate(entry_price, current_price):
-    """수익률 >= OVERNIGHT_THRESHOLD 이면 오버나이트 트랙으로 전환."""
+    """(레거시) 수익률 >= OVERNIGHT_THRESHOLD 이면 True. 종합 평가는 evaluate_overnight 사용."""
     if entry_price <= 0:
         return False
     return (current_price - entry_price) / entry_price >= OVERNIGHT_THRESHOLD
+
+
+# ══════════════════════════════════════════════════════════════
+#  오버나이트 종합 평가 시스템
+# ══════════════════════════════════════════════════════════════
+
+def _score_profit(entry_price: float, current_price: float) -> tuple:
+    """
+    수익률 점수 (max 25점).
+    +3% 미만  →  0점 (데이트레이딩으로 정리)
+    +3~5%    → 10점
+    +5~7%    → 15점
+    +7~10%   → 20점
+    +10% 이상 → 25점
+    """
+    if entry_price <= 0:
+        return 0, "수익률 계산 불가"
+    pnl_pct = (current_price - entry_price) / entry_price
+    if pnl_pct < 0.03:
+        return 0, f"수익률 부족 ({pnl_pct:+.1%})"
+    elif pnl_pct < 0.05:
+        return 10, f"수익 +{pnl_pct:.1%}"
+    elif pnl_pct < 0.07:
+        return 15, f"수익 +{pnl_pct:.1%}"
+    elif pnl_pct < 0.10:
+        return 20, f"수익 +{pnl_pct:.1%}"
+    else:
+        return 25, f"강한 수익 +{pnl_pct:.1%}"
+
+
+def _score_news(code: str) -> tuple:
+    """
+    뉴스/공시 센티먼트 점수 (max 25점).
+    - 긍정 키워드 많으면 가산, 부정 키워드 있으면 감점
+    - 뉴스 없으면 중립 (10점)
+    """
+    try:
+        from config.settings import OVERNIGHT_NEWS_POSITIVE, OVERNIGHT_NEWS_NEGATIVE
+    except ImportError:
+        OVERNIGHT_NEWS_POSITIVE = []
+        OVERNIGHT_NEWS_NEGATIVE = []
+
+    try:
+        from tools.news_tools import get_all_news
+        news_list = get_all_news(code, days=1, max_per_source=10)
+    except Exception:
+        return 10, "뉴스 조회 실패 (중립)"
+
+    if not news_list:
+        return 10, "뉴스 없음 (중립)"
+
+    positive_count = 0
+    negative_count = 0
+    for item in news_list:
+        title = item.get("title", "")
+        for kw in OVERNIGHT_NEWS_POSITIVE:
+            if kw in title:
+                positive_count += 1
+                break
+        for kw in OVERNIGHT_NEWS_NEGATIVE:
+            if kw in title:
+                negative_count += 1
+                break
+
+    # 점수 계산
+    if negative_count >= 2:
+        return 0, f"부정 뉴스 {negative_count}건 (위험)"
+    elif negative_count == 1 and positive_count == 0:
+        return 5, f"부정 뉴스 1건"
+    elif positive_count == 0 and negative_count == 0:
+        return 10, f"뉴스 {len(news_list)}건 (중립)"
+    elif positive_count >= 3:
+        return 25, f"긍정 뉴스 {positive_count}건 (강한 호재)"
+    elif positive_count >= 1:
+        score = min(10 + positive_count * 5 - negative_count * 5, 25)
+        return max(score, 5), f"긍정 {positive_count}건 / 부정 {negative_count}건"
+    else:
+        return 10, "분류 불가 (중립)"
+
+
+def _score_trend(df_ohlcv) -> tuple:
+    """
+    차트 추세 점수 (max 25점).
+    - RSI: 50~70 구간이면 가산
+    - 5일선 > 20일선 (골든크로스 상태)
+    - 종가가 볼린저 상단 부근 또는 그 위
+    - 양봉 마감 여부
+    """
+    if df_ohlcv is None or len(df_ohlcv) < 20:
+        return 10, "차트 데이터 부족 (중립)"
+
+    score = 0
+    reasons = []
+
+    # RSI 확인
+    rsi = calc_rsi(df_ohlcv)
+    if 55 <= rsi <= 70:
+        score += 8
+        reasons.append(f"RSI 양호({rsi:.0f})")
+    elif 45 <= rsi < 55:
+        score += 4
+        reasons.append(f"RSI 중립({rsi:.0f})")
+    elif rsi > 70:
+        score += 2
+        reasons.append(f"RSI 과열({rsi:.0f})")
+    else:
+        reasons.append(f"RSI 약세({rsi:.0f})")
+
+    # 이동평균선: 5MA > 20MA (상승 추세)
+    closes = df_ohlcv["close"].values.astype(float)
+    ma5 = float(closes[-5:].mean())
+    ma20 = float(closes[-20:].mean())
+    if ma5 > ma20:
+        score += 7
+        reasons.append("5MA>20MA(상승)")
+    else:
+        score += 2
+        reasons.append("5MA<20MA(하락)")
+
+    # 볼린저 밴드 위치
+    bb = calc_bollinger(df_ohlcv)
+    last_close = float(closes[-1])
+    if last_close >= bb["upper"]:
+        score += 5
+        reasons.append("볼린저 상단 돌파")
+    elif last_close >= bb["mid"]:
+        score += 3
+        reasons.append("볼린저 중간 이상")
+    else:
+        reasons.append("볼린저 하단")
+
+    # 양봉 마감
+    last_open = float(df_ohlcv["open"].values[-1])
+    if last_close > last_open:
+        score += 5
+        reasons.append("양봉 마감")
+    else:
+        score += 1
+        reasons.append("음봉 마감")
+
+    return min(score, 25), " | ".join(reasons)
+
+
+def _score_volume(df_ohlcv) -> tuple:
+    """
+    거래량 건전성 점수 (max 25점).
+    - 당일 거래량이 20일 평균 대비 높으면 가산
+    - 거래량 증가 추세 (최근 3일 우상향)
+    - 거래량 급감 시 감점 (세력 이탈 징후)
+    """
+    if df_ohlcv is None or len(df_ohlcv) < 20:
+        return 10, "거래량 데이터 부족 (중립)"
+
+    score = 0
+    reasons = []
+    volumes = df_ohlcv["volume"].values.astype(float)
+
+    avg_vol_20 = float(volumes[-20:].mean())
+    today_vol = float(volumes[-1])
+
+    if avg_vol_20 <= 0:
+        return 10, "평균거래량 0 (중립)"
+
+    vol_ratio = today_vol / avg_vol_20
+
+    # 거래량 비율
+    if vol_ratio >= 3.0:
+        score += 12
+        reasons.append(f"거래량 폭증({vol_ratio:.1f}x)")
+    elif vol_ratio >= 2.0:
+        score += 10
+        reasons.append(f"거래량 급증({vol_ratio:.1f}x)")
+    elif vol_ratio >= 1.2:
+        score += 7
+        reasons.append(f"거래량 증가({vol_ratio:.1f}x)")
+    elif vol_ratio >= 0.8:
+        score += 4
+        reasons.append(f"거래량 보통({vol_ratio:.1f}x)")
+    else:
+        score += 0
+        reasons.append(f"거래량 급감({vol_ratio:.1f}x)")
+
+    # 최근 3일 거래량 추세
+    if len(volumes) >= 3:
+        v3 = volumes[-3:]
+        if v3[-1] > v3[-2] > v3[-3]:
+            score += 8
+            reasons.append("3일 연속 증가")
+        elif v3[-1] > v3[-2]:
+            score += 5
+            reasons.append("2일 증가")
+        elif v3[-1] < v3[-2] < v3[-3]:
+            score += 0
+            reasons.append("3일 연속 감소")
+        else:
+            score += 3
+            reasons.append("거래량 혼조")
+
+    # 프로그램 매수 징후 (상승 + 거래량 증가)
+    closes = df_ohlcv["close"].values.astype(float)
+    if len(closes) >= 2 and closes[-1] > closes[-2] and vol_ratio >= 1.5:
+        score += 5
+        reasons.append("가격↑+거래량↑")
+
+    return min(score, 25), " | ".join(reasons)
+
+
+def evaluate_overnight(code: str, entry_price: float, current_price: float,
+                       df_ohlcv=None) -> dict:
+    """
+    오버나이트 홀딩 종합 평가.
+
+    4가지 요소를 종합하여 100점 만점으로 채점:
+      1) 수익률 (25점) — 당일 수익률 기반
+      2) 뉴스/공시 (25점) — 키워드 센티먼트
+      3) 차트 추세 (25점) — RSI, 이평선, 볼린저, 양봉
+      4) 거래량 건전성 (25점) — 거래량 비율, 추세
+
+    Parameters
+    ----------
+    code          : 종목코드
+    entry_price   : 평균 매수 단가
+    current_price : 현재가 (= 장 마감 부근 가격)
+    df_ohlcv      : 최근 60일 OHLCV DataFrame (없으면 수익률+뉴스만 평가)
+
+    Returns
+    -------
+    dict: {
+        hold: bool,           # True면 오버나이트 홀딩
+        score: int,           # 총점 (0~100)
+        grade: str,           # A/B/C/D
+        breakdown: dict,      # 항목별 {score, reason}
+        closing_price: float, # 종가 (익일 손절 기준가)
+        stop_loss: float,     # 익일 손절가 (종가 기준)
+    }
+    """
+    try:
+        from config.settings import OVERNIGHT_MIN_SCORE, OVERNIGHT_STOP_PCT
+    except ImportError:
+        OVERNIGHT_MIN_SCORE = 60
+        OVERNIGHT_STOP_PCT = -0.03
+
+    # 각 항목 채점
+    profit_score, profit_reason = _score_profit(entry_price, current_price)
+    news_score, news_reason = _score_news(code)
+    trend_score, trend_reason = _score_trend(df_ohlcv)
+    volume_score, volume_reason = _score_volume(df_ohlcv)
+
+    total_score = profit_score + news_score + trend_score + volume_score
+
+    # 등급 판정
+    if total_score >= 85:
+        grade = "A"
+    elif total_score >= 70:
+        grade = "B"
+    elif total_score >= OVERNIGHT_MIN_SCORE:
+        grade = "C"
+    else:
+        grade = "D"
+
+    # 종가 결정 (df_ohlcv의 마지막 close 또는 current_price)
+    if df_ohlcv is not None and len(df_ohlcv) > 0:
+        closing_price = float(df_ohlcv["close"].values[-1])
+    else:
+        closing_price = current_price
+
+    # 익일 손절가 = 종가 기준
+    stop_loss = round(closing_price * (1 + OVERNIGHT_STOP_PCT), 0)
+
+    hold = total_score >= OVERNIGHT_MIN_SCORE
+
+    # 수익률이 마이너스면 무조건 비홀딩
+    if entry_price > 0 and current_price < entry_price:
+        hold = False
+
+    return {
+        "hold": hold,
+        "score": total_score,
+        "grade": grade,
+        "breakdown": {
+            "profit":  {"score": profit_score, "max": 25, "reason": profit_reason},
+            "news":    {"score": news_score,   "max": 25, "reason": news_reason},
+            "trend":   {"score": trend_score,  "max": 25, "reason": trend_reason},
+            "volume":  {"score": volume_score, "max": 25, "reason": volume_reason},
+        },
+        "closing_price": closing_price,
+        "stop_loss": stop_loss,
+    }
+
+
+def calc_overnight_stop(closing_price: float, stop_pct: float = None) -> float:
+    """
+    익일 손절가 계산 — 종가 기준.
+    평단이 아니라 그날 종가에서 손절 라인을 잡는다.
+
+    Parameters
+    ----------
+    closing_price : 오버나이트 결정 당일 종가
+    stop_pct      : 손절 비율 (기본값: settings.OVERNIGHT_STOP_PCT)
+    """
+    if stop_pct is None:
+        try:
+            from config.settings import OVERNIGHT_STOP_PCT
+            stop_pct = OVERNIGHT_STOP_PCT
+        except ImportError:
+            stop_pct = -0.03
+    return round(closing_price * (1 + stop_pct), 0)
 
 
 if __name__ == "__main__":

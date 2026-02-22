@@ -35,9 +35,28 @@ TIME_DECAY_ATR = {
     3: -0.3,   # Day 3: 진입가 + 0.3×ATR (본전+버퍼)
 }
 
-# 오버나이트
-OVERNIGHT_THRESHOLD = 0.07    # +7% 이상 시 오버나이트 트랙 전환
-OVERNIGHT_STOP_PCT = -0.05    # 익일 손절: -5%
+# 오버나이트 종합 평가
+OVERNIGHT_THRESHOLD = 0.07    # (레거시) 수익률만으로 판단 시 최소 기준
+OVERNIGHT_STOP_PCT = -0.03    # 익일 손절: 종가 대비 -3%
+
+# 오버나이트 스코어링 (총 100점, 60점 이상 시 홀딩)
+OVERNIGHT_MIN_SCORE = 60      # 오버나이트 최소 합격 점수
+OVERNIGHT_PROFIT_WEIGHT = 25  # 수익률 배점 (max 25)
+OVERNIGHT_NEWS_WEIGHT = 25    # 뉴스/공시 배점 (max 25)
+OVERNIGHT_TREND_WEIGHT = 25   # 차트 추세 배점 (max 25)
+OVERNIGHT_VOLUME_WEIGHT = 25  # 거래량 건전성 배점 (max 25)
+
+# 뉴스 센티먼트 키워드
+OVERNIGHT_NEWS_POSITIVE = [
+    "실적 호조", "어닝 서프라이즈", "상향", "증액", "신고가",
+    "목표주가 상향", "매수 의견", "수주", "흑자전환", "계약 체결",
+    "신규 사업", "성장", "호실적", "최대 실적", "영업이익 증가",
+]
+OVERNIGHT_NEWS_NEGATIVE = [
+    "하향", "감액", "손실", "적자", "리콜", "소송", "제재",
+    "목표주가 하향", "매도 의견", "하락", "유상증자", "횡령",
+    "감사의견 거절", "상장폐지", "공매도", "대량 매도",
+]
 
 # 시간 설정 (KST)
 MARKET_OPEN_HOLD = "09:10"    # 매수 신호 활성화 시각
