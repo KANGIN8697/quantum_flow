@@ -4,7 +4,7 @@
 import os
 import time
 import threading
-import requests
+
 from datetime import datetime
 from dotenv import load_dotenv
 import logging
@@ -16,7 +16,6 @@ def safe_float(val, default=0.0):
         if hasattr(val, 'item'): return float(val.item())
         return float(val)
     except (TypeError, ValueError, IndexError): return default
-
 
 def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
     """yfinance download with retry logic"""
@@ -33,9 +32,6 @@ def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
             else:
                 print(f"    yf.download({ticker}) failed after {retries} retries: {e}")
     return None
-
-
-
 
 try:
     import yfinance as yf
@@ -102,7 +98,6 @@ TOP10_TICKERS = [
     "055550.KS",  # 신한지주
     "035720.KS",  # 카카오
 ]
-
 
 class MarketWatcher:
     """
@@ -546,7 +541,6 @@ Risk-Off 선언 시각: {risk_off_time}
             logger.debug(f"agents/market_watcher.py: {type(e).__name__}: {e}")
             pass
 
-
 # ── main.py 진입점 ─────────────────────────────────────────────
 
 async def market_watcher_run():
@@ -564,7 +558,6 @@ async def market_watcher_run():
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _watcher_blocking_loop, watcher)
 
-
 def _watcher_blocking_loop(watcher: MarketWatcher):
     """executor 내에서 실행되는 블로킹 감시 루프"""
     while watcher._running:
@@ -581,7 +574,6 @@ def _watcher_blocking_loop(watcher: MarketWatcher):
                 pass
         time.sleep(watcher.check_interval)
     print(f"🛑 [{MODE_LABEL}] MarketWatcher 종료")
-
 
 # ── 테스트 블록 ────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -619,7 +611,6 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  ✅ MarketWatcher 테스트 완료!")
     print("=" * 60)
-
 
 # Wrapper for main.py compatibility
 async def market_watcher_run():

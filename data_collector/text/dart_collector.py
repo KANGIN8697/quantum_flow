@@ -6,7 +6,7 @@ import time
 import logging
 import requests
 from datetime import datetime, timedelta
-from urllib.parse import quote
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,7 +22,6 @@ DART_BASE_URL = "https://opendart.fss.or.kr/api"
 # 캐시
 _cache = {}
 CACHE_TTL = 1800  # 30분
-
 
 def fetch_dart_disclosures(corp_code: str = "", max_items: int = 20) -> list:
     """DART 공시 목록 조회"""
@@ -73,7 +72,6 @@ def fetch_dart_disclosures(corp_code: str = "", max_items: int = 20) -> list:
         logger.error(f"DART 공시 조회 실패: {e}")
         return []
 
-
 def fetch_major_disclosures(max_items: int = 50) -> list:
     """주요 공시 (매출, 실적 등) 조회"""
     try:
@@ -101,7 +99,6 @@ def fetch_major_disclosures(max_items: int = 50) -> list:
     except Exception as e:
         logger.error(f"주요 공시 조회 실패: {e}")
         return []
-
 
 def fetch_corp_info(corp_code: str) -> dict:
     """기업 기본 정보 조회"""
@@ -150,7 +147,6 @@ def fetch_corp_info(corp_code: str) -> dict:
     except Exception as e:
         logger.error(f"기업 정보 조회 실패: {e}")
         return {}
-
 
 def search_corp_by_name(corp_name: str) -> list:
     """기업명으로 기업 코드 검색"""

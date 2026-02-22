@@ -16,7 +16,7 @@
 
 import os
 import sqlite3
-import json
+
 import logging
 from contextlib import contextmanager
 from datetime import datetime
@@ -26,7 +26,6 @@ logger = logging.getLogger("db_manager")
 # ── 경로 설정 ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "market_data.db")
-
 
 # ── 커넥션 관리 ───────────────────────────────────────────
 
@@ -47,7 +46,6 @@ def get_conn(db_path: str = None):
         raise
     finally:
         conn.close()
-
 
 # ── 테이블 생성 (DDL) ─────────────────────────────────────
 
@@ -95,7 +93,6 @@ CREATE TABLE IF NOT EXISTS ohlcv_60m (
 );
 CREATE INDEX IF NOT EXISTS idx_ohlcv_60m_ticker ON ohlcv_60m(ticker, datetime);
 
-
 -- ═══════════════════════════════════════════════════════════
 --  2. 국내 일봉 (KIS API)
 -- ═══════════════════════════════════════════════════════════
@@ -114,7 +111,6 @@ CREATE TABLE IF NOT EXISTS daily_ohlcv (
 );
 CREATE INDEX IF NOT EXISTS idx_daily_ticker ON daily_ohlcv(ticker, date);
 
-
 -- ═══════════════════════════════════════════════════════════
 --  3. 해외 지수/지표 일봉 (yfinance)
 -- ═══════════════════════════════════════════════════════════
@@ -132,7 +128,6 @@ CREATE TABLE IF NOT EXISTS global_daily (
 );
 CREATE INDEX IF NOT EXISTS idx_global_ticker ON global_daily(ticker, date);
 
-
 -- ═══════════════════════════════════════════════════════════
 --  4. 한국 거시경제 (ECOS)
 -- ═══════════════════════════════════════════════════════════
@@ -146,7 +141,6 @@ CREATE TABLE IF NOT EXISTS kr_macro (
     PRIMARY KEY (date, indicator_code)
 );
 
-
 -- ═══════════════════════════════════════════════════════════
 --  5. 미국 거시경제 (FRED)
 -- ═══════════════════════════════════════════════════════════
@@ -159,7 +153,6 @@ CREATE TABLE IF NOT EXISTS us_macro (
     unit            TEXT,
     PRIMARY KEY (date, series_id)
 );
-
 
 -- ═══════════════════════════════════════════════════════════
 --  6. DART 공시
@@ -178,7 +171,6 @@ CREATE TABLE IF NOT EXISTS dart_disclosures (
 CREATE INDEX IF NOT EXISTS idx_dart_ticker ON dart_disclosures(ticker, date);
 CREATE INDEX IF NOT EXISTS idx_dart_date ON dart_disclosures(date);
 
-
 -- ═══════════════════════════════════════════════════════════
 --  7. 뉴스 헤드라인 (RSS)
 -- ═══════════════════════════════════════════════════════════
@@ -193,7 +185,6 @@ CREATE TABLE IF NOT EXISTS news_headlines (
     UNIQUE(date, source, title)
 );
 CREATE INDEX IF NOT EXISTS idx_news_date ON news_headlines(date);
-
 
 -- ═══════════════════════════════════════════════════════════
 --  8. 중앙은행 성명서
@@ -212,7 +203,6 @@ CREATE TABLE IF NOT EXISTS bok_statements (
     rate_decision   TEXT
 );
 
-
 -- ═══════════════════════════════════════════════════════════
 --  9. 시장 국면 (Regime)
 -- ═══════════════════════════════════════════════════════════
@@ -230,7 +220,6 @@ CREATE TABLE IF NOT EXISTS market_regime (
     trigger_reasons TEXT
 );
 
-
 -- ═══════════════════════════════════════════════════════════
 --  10. 수집 메타데이터 (진행 추적)
 -- ═══════════════════════════════════════════════════════════
@@ -247,13 +236,11 @@ CREATE TABLE IF NOT EXISTS collection_log (
 );
 """
 
-
 def init_db(db_path: str = None):
     """모든 테이블을 생성한다. 이미 존재하면 skip."""
     with get_conn(db_path) as conn:
         conn.executescript(_SCHEMA_SQL)
     logger.info(f"DB 초기화 완료: {db_path or DB_PATH}")
-
 
 # ── UPSERT 헬퍼 ──────────────────────────────────────────
 
@@ -276,7 +263,6 @@ def upsert_rows(table: str, rows: list, db_path: str = None):
 
     return count
 
-
 def insert_rows_ignore(table: str, rows: list, db_path: str = None):
     """INSERT OR IGNORE로 bulk insert (중복 무시)."""
     if not rows:
@@ -291,7 +277,6 @@ def insert_rows_ignore(table: str, rows: list, db_path: str = None):
         cursor = conn.executemany(sql, values)
         return cursor.rowcount
 
-
 # ── 조회 헬퍼 ────────────────────────────────────────────
 
 def query(sql: str, params: tuple = (), db_path: str = None) -> list:
@@ -301,13 +286,11 @@ def query(sql: str, params: tuple = (), db_path: str = None) -> list:
         columns = [desc[0] for desc in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-
 def query_df(sql: str, params: tuple = (), db_path: str = None):
     """SELECT 쿼리 → pandas DataFrame 반환."""
     import pandas as pd
     with get_conn(db_path) as conn:
         return pd.read_sql_query(sql, conn, params=params)
-
 
 def get_latest_date(table: str, ticker: str = None,
                     date_col: str = "date", db_path: str = None) -> str:
@@ -320,12 +303,10 @@ def get_latest_date(table: str, ticker: str = None,
         result = query(sql, (), db_path)
     return result[0]["d"] or "" if result else ""
 
-
 def get_row_count(table: str, db_path: str = None) -> int:
     """테이블 행 수 반환."""
     result = query(f"SELECT COUNT(*) as cnt FROM {table}", (), db_path)
     return result[0]["cnt"] if result else 0
-
 
 def log_collection(source: str, action: str, ticker: str = None,
                    rows_added: int = 0, status: str = "OK",
@@ -341,7 +322,6 @@ def log_collection(source: str, action: str, ticker: str = None,
         "message": message,
     }
     insert_rows_ignore("collection_log", [row], db_path)
-
 
 # ── DB 상태 리포트 ────────────────────────────────────────
 
@@ -365,7 +345,6 @@ def db_status_report(db_path: str = None) -> dict:
         except Exception:
             report[t] = {"rows": 0, "latest": ""}
     return report
-
 
 # ── 초기화 실행 ───────────────────────────────────────────
 

@@ -2,7 +2,6 @@
 # ìµì¢ ë§ ë§¤ ê²°ì  + í¬í¸í´ë¦¬ì¤ ê´ë¦¬ + í¬ì§ì ì¬ì´ì§
 # stock_evalì position_pct + ë§¤í¬ë¡ ì ëµì ì¢í©íì¬ ìµì¢ ì£¼ë¬¸ ê²°ì 
 
-import asyncio
 import logging
 from datetime import datetime
 
@@ -19,7 +18,6 @@ from tools.trade_logger import log_trade, log_signal, log_risk_event
 from tools.notifier_tools import notify_trade_decision
 
 logger = logging.getLogger("head_strategist")
-
 
 class HeadStrategist:
     """í¤ë ì ëµê° â ìµì¢ ë§ ë§¤ ê²°ì  ë° í¨í¸í´ë¦¬ì¤ ê´ë¦¬"""
@@ -119,7 +117,6 @@ class HeadStrategist:
                 if recovery_state == "RECOVERED":
                     final_pct *= RECOVERY_POSITION_RATIO
 
-
                 # ë°©ì´ì  ì ë´ì´ë©´ ì¶ê° ì¶ì
                 if strategy == "ë°©ì´ì ":
                     final_pct *= 0.5
@@ -156,7 +153,6 @@ class HeadStrategist:
                 except Exception as e:
                     logger.debug(f"agents/head_strategist.py: {type(e).__name__}: {e}")
                     pass
-
 
                 # ë§ ë§¤ ê¸°ë¡ ì ì¥
                 log_trade("BUY", code,
@@ -237,7 +233,6 @@ class HeadStrategist:
                 pass
             print(f"    ð¨ ê¸´ê¸ ì²­ì°: {code}")
         return actions
-
 
 async def head_strategist_run() -> dict:
     """í¤ë ì ëµê° ì¤í í¨ì â async defë¡ ì ì"""
