@@ -31,3 +31,11 @@ python-telegram-bot>=21.5
 python-dotenv>=1.0.1
 pytz>=2024.1
 pycryptodome>=3.20.0
+holidays>=0.40
+
+# ── 데이터 파이프라인 (로컬 PC용, 선택 설치) ──
+# chromadb>=0.4.0              # 벡터 DB
+# sentence-transformers>=2.2.0 # 임베딩 모델
+# fredapi>=0.5.0               # FRED API 래퍼 (직접 REST도 가능)
+# pywin32                      # Windows COM (Creon, 32bit 전용)
+# pykiwoom                     # 키움 OpenAPI (Windows 32bit 전용)

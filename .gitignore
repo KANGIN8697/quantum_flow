@@ -10,3 +10,9 @@ outputs/token_cache.json
 dist/
 build/
 .DS_Store
+
+# 데이터 파이프라인
+database/*.db
+database/chroma/
+logs/*.log
+config/api_keys.env
