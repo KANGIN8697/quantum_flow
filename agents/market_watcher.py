@@ -70,7 +70,9 @@ except ImportError:
     def notify_error(s, e, m="모의투자"): pass
     def build_news_context(c): return ""
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+from tools.llm_client import get_llm_client
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # 레거시: API 키 존재 여부 체크용
 MODE_LABEL = "모의투자" if os.getenv("USE_PAPER", "true").lower() == "true" else "실전투자"
 
 # ── 감시 대상 티커 ────────────────────────────────────────────
@@ -319,14 +321,7 @@ class MarketWatcher:
         -------
         bool: True면 Risk-Off 선언 확정
         """
-        if not OPENAI_API_KEY:
-            print("  ⚠️  [LLM] OPENAI_API_KEY 없음 — 정량 판단만 사용")
-            return True   # API 키 없으면 정량 판단 따름
-
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-
             # 현재 포지션 정보
             positions = get_positions()
             pos_summary = ""
@@ -347,8 +342,7 @@ class MarketWatcher:
 
             trigger_str = "\n".join(f"- {t}" for t in trigger_details)
 
-            prompt = f"""
-당신은 한국 주식 시장 Risk 관리 전문가입니다.
+            prompt = f"""당신은 한국 주식 시장 Risk 관리 전문가입니다.
 아래 상황에서 즉각적인 Risk-Off 선언(전 포지션 청산 + 신규 매수 중단)이 필요한지 판단해주세요.
 
 [발동된 거시 지표 트리거]
@@ -362,17 +356,10 @@ class MarketWatcher:
 - YES: 시장 붕괴 위험이 높아 즉각 청산이 필요한 경우
 - NO: 일시적 노이즈로 파라미터 조정만으로 충분한 경우
 
-반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하고, 그 이유를 한 문장으로 설명하세요.
-""".strip()
+반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하고, 그 이유를 한 문장으로 설명하세요."""
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=100,
-                temperature=0.1,
-            )
-
-            answer = response.choices[0].message.content.strip()
+            llm = get_llm_client()
+            answer = llm.classify(prompt, temperature=0.1, max_tokens=100)
             first_line = answer.split("\n")[0].strip().upper()
             confirm = first_line.startswith("YES")
 
@@ -460,13 +447,7 @@ class MarketWatcher:
         """
         LLM에게 '시장이 안정화되었는가?' 재질의.
         """
-        if not OPENAI_API_KEY:
-            print("  ⚠️  [LLM] OPENAI_API_KEY 없음 — 정량 기준만 사용")
-            return True
-
         try:
-            client = OpenAI(api_key=OPENAI_API_KEY)
-
             risk_off_time = get_state("risk_off_time") or "불명"
 
             prompt = f"""당신은 한국 주식 시장 Risk 관리 전문가입니다.
@@ -484,14 +465,8 @@ Risk-Off 선언 시각: {risk_off_time}
 
 반드시 'YES' 또는 'NO' 한 단어만 첫 줄에 답하세요."""
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=100,
-                temperature=0.1,
-            )
-
-            answer = response.choices[0].message.content.strip()
+            llm = get_llm_client()
+            answer = llm.classify(prompt, temperature=0.1, max_tokens=100)
             first_line = answer.split("\n")[0].strip().upper()
             stable = first_line.startswith("YES")
 

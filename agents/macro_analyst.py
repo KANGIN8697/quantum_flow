@@ -34,7 +34,8 @@ except ImportError:
     def check_urgent_news(n=None):
         return {"level": "LOW", "total_score": 0}
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+from tools.llm_client import get_llm_client
+
 USE_PAPER      = os.getenv("USE_PAPER", "true").lower() == "true"
 MODE_LABEL     = "모의투자" if USE_PAPER else "실전투자"
 
@@ -159,29 +160,18 @@ async def analyze_with_gpt(macro_data: dict, news_list: list, urgent_info: dict)
 반드시 지정된 JSON 형식으로 응답하세요."""
     
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-        
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
+        llm = get_llm_client()
+        analysis = await asyncio.to_thread(
+            llm.analyze_json,
+            system=SYSTEM_PROMPT,
+            user=user_msg,
             temperature=0.3,
             max_tokens=3000,
         )
-        
-        text = resp.choices[0].message.content.strip()
-        
-        # JSON 파싱
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        
-        analysis = json.loads(text)
-        
+
+        if not analysis:
+            return _default_analysis("LLM 응답 JSON 파싱 실패")
+
         # 필수 필드 확인
         if "risk" not in analysis:
             analysis["risk"] = "ON"
@@ -191,13 +181,9 @@ async def analyze_with_gpt(macro_data: dict, news_list: list, urgent_info: dict)
             analysis["report"] = "보고서 생성 실패"
         if "urgent_action" not in analysis:
             analysis["urgent_action"] = "NONE"
-        
+
         return analysis
-        
-    except json.JSONDecodeError as e:
-        print(f"  ⚠ GPT 응답 JSON 파싱 실패: {e}")
-        # 텍스트 응답이라도 활용
-        return _default_analysis(f"JSON 파싱 실패, GPT 원문 참고: {text[:200]}")
+
     except Exception as e:
         reason = f"LLM 오류 ({e}) → 보수적 기본값 사용"
         print(f"  ⚠ {reason}")

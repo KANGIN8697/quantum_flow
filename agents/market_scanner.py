@@ -57,7 +57,8 @@ except ImportError:
         return [evaluate_stock(c) for c in codes]
 
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+from tools.llm_client import get_llm_client
+
 USE_PAPER      = os.getenv("USE_PAPER", "true").lower() == "true"
 MODE_LABEL     = "모의투자" if USE_PAPER else "실전투자"
 
@@ -287,18 +288,13 @@ def select_with_llm(candidates: list, preferred_sectors: list) -> list:
 selected 배열에는 6자리 종목코드만 넣으세요. 최대 30개."""
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+        llm = get_llm_client()
+        result = llm.analyze_json(
+            system="당신은 한국 주식 단기 트레이더입니다. 반드시 JSON으로 응답하세요.",
+            user=prompt,
             temperature=0.2,
-            response_format={"type": "json_object"},
+            max_tokens=500,
         )
-        content = response.choices[0].message.content.strip()
-        result  = json.loads(content)
 
         selected = result.get("selected", [])
         reason   = result.get("reason", "")

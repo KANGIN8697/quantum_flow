@@ -53,7 +53,7 @@ def check_env():
     required = [
         "KIS_APP_KEY", "KIS_APP_SECRET",
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-        "OPENAI_API_KEY",
+        "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
     ]
     optional = ["FRED_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"]
 
@@ -433,6 +433,17 @@ async def job_daily_report():
         # 일별 대시보드
         trades = get_daily_trades()
         create_and_send_daily_dashboard(perf, trades, positions)
+
+        # LLM 비용 일일 요약 + 리셋
+        from tools.cost_tracker import get_cost_tracker
+        ct = get_cost_tracker()
+        summary = ct.daily_summary()
+        if summary["total_calls"] > 0:
+            print(f"  💰 LLM 비용: ${summary['total_cost_usd']:.4f} "
+                  f"({summary['total_calls']}건)")
+            for model, info in summary["by_model"].items():
+                print(f"     {model}: {info['calls']}건 ${info['cost_usd']:.4f}")
+        ct.reset()
     except Exception as e:
         logger.error(f"일일 리포트 생성 실패: {e}", exc_info=True)
 
