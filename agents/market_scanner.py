@@ -542,6 +542,116 @@ async def run_scanner(round_label: str = "1차") -> list:
     return watch_list
 
 
+# ── 장중 긴급 재스캔 ──────────────────────────────────────
+
+async def run_emergency_rescan(reason: str) -> dict:
+    """
+    장중 긴급 재스캔 (경량 버전).
+    풀 스캔이 아니라 현재 감시 리스트의 평가만 갱신하고,
+    필요시 거래량 상위에서 신규 종목을 보충한다.
+    
+    Parameters
+    ----------
+    reason : 재스캔 트리거 사유
+    
+    Returns
+    -------
+    dict: {"updated_count": int, "added": list, "removed": list}
+    """
+    import asyncio
+    
+    print(f"\n  🔍 긴급 재스캔 (사유: {reason[:50]})")
+    
+    loop = asyncio.get_running_loop()
+    
+    # 1. 현재 감시 리스트 가져오기
+    current_watch = get_state("watch_list") or []
+    if not current_watch:
+        print("  ⚠ 감시 리스트 비어있음 → 풀 스캔 실행")
+        watch_list = await run_scanner("긴급")
+        return {"updated_count": len(watch_list), "added": watch_list, "removed": []}
+    
+    # 2. 현재 감시 종목들 재평가 (D/F 등급 탈락)
+    print(f"  📊 감시 종목 {len(current_watch)}개 재평가 중...")
+    try:
+        macro_sectors_list = get_state("macro_sectors") or []
+        avoid_sectors_list = get_state("macro_avoid_sectors") or []
+        sector_multipliers = get_state("sector_multipliers") or {}
+        macro_sectors = {
+            "sectors": macro_sectors_list,
+            "avoid_sectors": avoid_sectors_list,
+            "sector_multipliers": sector_multipliers,
+        }
+        
+        eval_results = evaluate_multiple(current_watch, macro_sectors)
+        eval_map = {r["code"]: r for r in eval_results}
+        
+        # D/F 등급 종목 제거
+        removed = []
+        kept = []
+        for code in current_watch:
+            ev = eval_map.get(code, {})
+            grade = ev.get("grade", "?")
+            if grade in ("D", "F"):
+                removed.append(code)
+            else:
+                kept.append(code)
+        
+        if removed:
+            print(f"  🔻 D/F 등급 제거: {removed}")
+    except Exception as e:
+        print(f"  ⚠ 재평가 실패: {e}")
+        kept = current_watch
+        removed = []
+    
+    # 3. 제거된 만큼 거래량 상위에서 보충
+    added = []
+    if len(removed) >= 2:
+        try:
+            print(f"  🔍 {len(removed)}종목 보충을 위해 거래량 상위 조회...")
+            vol_top = await loop.run_in_executor(None, fetch_volume_top, 20)
+            existing_set = set(kept)
+            
+            for item in vol_top:
+                if len(added) >= len(removed):
+                    break
+                code = item.get("code", "")
+                if code not in existing_set:
+                    added.append(code)
+                    existing_set.add(code)
+            
+            if added:
+                print(f"  🔺 신규 추가: {added}")
+        except Exception as e:
+            print(f"  ⚠ 보충 조회 실패: {e}")
+    
+    # 4. 감시 리스트 업데이트
+    new_watch = kept + added
+    set_state("watch_list", new_watch)
+    
+    # scanner_result도 업데이트
+    scanner_selected = []
+    for code in new_watch:
+        ev = eval_map.get(code, {}) if 'eval_map' in dir() else {}
+        scanner_selected.append({
+            "code": code,
+            "eval_grade": ev.get("grade", "?"),
+            "eval_score": ev.get("total_score", 0),
+            "position_pct": ev.get("position_pct", 0.5),
+            "sector": ev.get("details", {}).get("sector", {}).get("sector", ""),
+            "entry_atr": 0,
+        })
+    set_state("scanner_result", {"selected": scanner_selected})
+    
+    print(f"  ✅ 재스캔 완료: 유지 {len(kept)} + 추가 {len(added)} = {len(new_watch)}종목")
+    
+    return {
+        "updated_count": len(new_watch),
+        "added": added,
+        "removed": removed,
+    }
+
+
 # ── main.py 진입점 ─────────────────────────────────────────────
 
 async def market_scanner_run() -> dict:

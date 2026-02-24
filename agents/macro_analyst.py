@@ -417,6 +417,129 @@ async def run_macro_analysis() -> dict:
     return result
 
 
+# ── 장중 경량 재분석 ─────────────────────────────────────
+
+INTRADAY_SYSTEM_PROMPT = """당신은 한국 주식시장 거시경제 분석가입니다.
+장중에 발생한 변화를 기존 분석과 비교하여 전략 수정이 필요한지 판단합니다.
+
+반드시 아래 JSON 형식으로 응답하세요:
+{
+  "strategy_changed": true/false,
+  "new_strategy": "공격적" 또는 "중립" 또는 "방어적",
+  "new_position_pct": 0.0~1.0,
+  "sectors_changed": true/false,
+  "new_sectors": ["섹터1", "섹터2"],
+  "new_avoid_sectors": ["회피섹터1"],
+  "reason": "변경 이유 한 줄 요약"
+}
+
+기존 아침 분석 대비 변동이 크지 않으면 strategy_changed: false로 응답하세요.
+비용 절약을 위해 report는 생성하지 않습니다."""
+
+
+async def run_intraday_reanalysis(trigger_reason: str) -> dict:
+    """
+    장중 경량 거시 재분석.
+    아침 분석(macro_snapshot) 대비 변경된 부분만 빠르게 업데이트.
+    Claude Sonnet 4.5를 사용하되 max_tokens를 줄여 비용 최소화.
+    """
+    from shared_state import get_state
+
+    print(f"\n  🔄 장중 경량 재분석 (사유: {trigger_reason[:50]})")
+
+    # 기존 아침 분석 결과 가져오기
+    existing = get_state("macro_result") or {}
+    existing_strategy = existing.get("strategy", "중립")
+    existing_pct = existing.get("position_size_pct", 0.5)
+    existing_sectors = existing.get("sectors", [])
+
+    # 현재 지표 수집 (경량 — 뉴스 최소화)
+    try:
+        raw_data = collect_all_macro_data()
+        macro_data = raw_data.get("macro_data", {})
+        news_list = raw_data.get("news", [])[:5]  # 5개만
+    except Exception as e:
+        print(f"  ⚠ 데이터 수집 실패: {e}")
+        return existing
+
+    # 지표 요약
+    indicators = ""
+    for k, v in macro_data.items():
+        val = v.get("value", 0)
+        chg = v.get("change_pct", "")
+        line = f"- {k}: {val}"
+        if chg:
+            line += f" ({chg:+.2f}%)" if isinstance(chg, (int, float)) else f" ({chg})"
+        indicators += line + "\n"
+
+    news_text = "\n".join([f"- {n.get('title', '')}" for n in news_list])
+
+    user_msg = f"""## 장중 긴급 재분석 요청
+사유: {trigger_reason}
+
+## 아침 분석 결과 (기존)
+- 전략: {existing_strategy}
+- 포지션 비중: {existing_pct:.0%}
+- 추천 섹터: {', '.join(existing_sectors)}
+
+## 현재 거시 지표
+{indicators}
+
+## 최신 뉴스 (상위 5건)
+{news_text}
+
+아침 분석 대비 전략 수정이 필요한지 판단하세요."""
+
+    try:
+        llm = get_llm_client()
+        result = await asyncio.to_thread(
+            llm.analyze_json,
+            system=INTRADAY_SYSTEM_PROMPT,
+            user=user_msg,
+            temperature=0.2,
+            max_tokens=500,  # 비용 절약: 아침 8000 → 500
+        )
+
+        if not result:
+            print("  ⚠ 재분석 JSON 파싱 실패")
+            return existing
+
+        if result.get("strategy_changed"):
+            new_strategy = result.get("new_strategy", existing_strategy)
+            new_pct = result.get("new_position_pct", existing_pct)
+            new_sectors = result.get("new_sectors", existing_sectors)
+            new_avoid = result.get("new_avoid_sectors", [])
+            reason = result.get("reason", "장중 변화")
+
+            # shared_state 업데이트
+            updated = {
+                "strategy": new_strategy,
+                "position_size_pct": new_pct,
+                "sectors": new_sectors,
+                "avoid_sectors": new_avoid,
+                "confidence": existing.get("confidence", 50),
+                "risk": existing.get("risk", "ON"),
+                "intraday_updated": True,
+                "intraday_reason": reason,
+            }
+            set_state("macro_result", updated)
+            set_state("macro_sectors", new_sectors)
+            set_state("macro_avoid_sectors", new_avoid)
+
+            print(f"  ✅ 전략 변경: {existing_strategy}→{new_strategy}, "
+                  f"비중: {existing_pct:.0%}→{new_pct:.0%}")
+            print(f"     사유: {reason}")
+            return updated
+        else:
+            reason = result.get("reason", "변동 없음")
+            print(f"  ✅ 전략 유지 (사유: {reason})")
+            return existing
+
+    except Exception as e:
+        print(f"  ⚠ 재분석 LLM 오류: {e}")
+        return existing
+
+
 # ── main.py 진입점 ────────────────────────────────────────
 
 async def macro_analyst_run() -> dict:

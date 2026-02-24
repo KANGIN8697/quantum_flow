@@ -62,6 +62,17 @@ except ImportError:
     RECOVERY_MAX_REENTRY   = 1
     RECOVERY_POSITION_RATIO = 0.6
 
+    # 장중 감시 강화 기본값
+    VIX_CAUTION_THRESHOLD    = 0.10
+    KOSPI_CAUTION_THRESHOLD  = -0.01
+    FX_CAUTION_THRESHOLD     = 10
+    SP500_CAUTION_THRESHOLD  = -0.01
+    SP500_ALERT_THRESHOLD    = -0.025
+    STOCK_RAPID_CHANGE_PCT   = 0.03
+    STOCK_RAPID_ALERT_PCT    = 0.05
+    VOLUME_SPIKE_CAUTION     = 3.0
+    VOLUME_SPIKE_ALERT       = 5.0
+
     def get_state(k): return None
     def set_state(k, v): pass
     def update_risk_params(p): pass
@@ -371,6 +382,177 @@ class MarketWatcher:
         except Exception as e:
             print(f"  ⚠️  [LLM] 검증 오류: {e} — 정량 판단 따름")
             return True   # 오류 시 안전을 위해 Risk-Off 선언
+
+    # ── 3.5 장중 감시 강화 메서드들 ────────────────────────
+
+    def _handle_caution(self, triggered: list, details: list):
+        """
+        주의 단계: GPT-4o-mini로 빠르게 상황 판단.
+        결과에 따라 파라미터 조정 또는 거시 재분석 트리거.
+        """
+        detail_str = "; ".join(details)
+        prompt = f"""한국 주식시장 감시 중 다음 지표가 감지되었습니다:
+{detail_str}
+
+이것이 1) 일시적 노이즈인지, 2) 파라미터 조정이 필요한 수준인지, 3) 거시 전략 재분석이 필요한 수준인지 판단하세요.
+
+반드시 첫 줄에 NOISE / ADJUST / REANALYZE 중 하나만 답하고, 이유를 한 줄로 설명하세요."""
+
+        try:
+            llm = get_llm_client()
+            answer = llm.classify(prompt, temperature=0.1, max_tokens=100)
+            first_line = answer.split("\n")[0].strip().upper()
+            print(f"  🤖 [주의 판단] {answer[:80]}")
+
+            if "REANALYZE" in first_line:
+                print("  🔄 거시 재분석 트리거!")
+                self._trigger_macro_reanalysis(detail_str)
+            elif "ADJUST" in first_line:
+                print("  ⚙️ 파라미터 소폭 조정")
+                update_risk_params({
+                    "risk_level": "MEDIUM",
+                    "pyramiding_allowed": False,
+                })
+            else:
+                print("  ✅ 노이즈로 판단 — 유지")
+        except Exception as e:
+            print(f"  ⚠️ 주의 판단 오류: {e}")
+
+    def _trigger_macro_reanalysis(self, reason: str):
+        """
+        장중 거시 재분석을 트리거한다.
+        macro_analyst의 경량 재분석 함수를 호출.
+        """
+        try:
+            from agents.macro_analyst import run_intraday_reanalysis
+            import asyncio
+
+            print("  🔄 장중 경량 거시 재분석 시작...")
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(run_intraday_reanalysis(reason))
+            loop.close()
+
+            if result:
+                new_strategy = result.get("strategy", "?")
+                new_pct = result.get("position_size_pct", 0)
+                print(f"  ✅ 재분석 완료: 전략={new_strategy}, 비중={new_pct:.0%}")
+
+                # 텔레그램 알림
+                try:
+                    from tools.notifier_tools import _send
+                    msg = (f"⚡ <b>장중 거시 재분석</b>\n"
+                           f"사유: {reason[:60]}\n"
+                           f"전략: {new_strategy} | 비중: {new_pct:.0%}")
+                    _send(msg)
+                except Exception:
+                    pass
+        except ImportError:
+            print("  ⚠️ run_intraday_reanalysis 미구현 — 스킵")
+        except Exception as e:
+            print(f"  ⚠️ 재분석 실패: {e}")
+
+    def _trigger_emergency_rescan(self, reason: str):
+        """
+        장중 긴급 재스캔을 트리거한다.
+        market_scanner의 경량 재스캔 함수를 호출.
+        """
+        try:
+            from agents.market_scanner import run_emergency_rescan
+            import asyncio
+
+            print("  🔍 장중 긴급 재스캔 시작...")
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(run_emergency_rescan(reason))
+            loop.close()
+
+            updated = result.get("updated_count", 0)
+            print(f"  ✅ 재스캔 완료: {updated}종목 감시 리스트 갱신")
+        except ImportError:
+            print("  ⚠️ run_emergency_rescan 미구현 — 스킵")
+        except Exception as e:
+            print(f"  ⚠️ 재스캔 실패: {e}")
+
+    def _check_intraday_news(self):
+        """
+        장중 뉴스를 주기적으로 체크하여 긴급 뉴스 감지 시 대응.
+        """
+        try:
+            from tools.macro_data_tools import check_urgent_news, collect_macro_news
+            news = collect_macro_news()
+            if not news:
+                return
+
+            urgent = check_urgent_news(news)
+            level = urgent.get("level", "LOW")
+
+            if level == "CRITICAL":
+                print(f"  🚨 긴급 뉴스 감지! (CRITICAL)")
+                self._trigger_macro_reanalysis("긴급 뉴스: " + str(urgent.get("urgent_items", [])[:2]))
+            elif level == "HIGH":
+                print(f"  ⚠️ 주요 뉴스 감지 (HIGH)")
+                # GPT-4o-mini로 보유 종목 연관성 빠른 체크
+                self._check_news_impact(urgent)
+        except Exception as e:
+            logger.debug(f"_check_intraday_news: {e}")
+
+    def _check_news_impact(self, urgent_info: dict):
+        """
+        HIGH 등급 뉴스가 보유 종목에 영향을 주는지 GPT-4o-mini로 빠르게 판단.
+        """
+        positions = get_positions()
+        if not positions:
+            return
+
+        items = urgent_info.get("urgent_items", [])
+        headlines = "; ".join([i.get("title", "") for i in items[:3]])
+        codes = list(positions.keys())[:5]
+
+        prompt = f"""뉴스: {headlines}
+보유종목: {codes}
+이 뉴스가 보유 종목에 부정적 영향을 줄 가능성이 있나요?
+YES 또는 NO로만 답하세요."""
+
+        try:
+            llm = get_llm_client()
+            answer = llm.classify(prompt, temperature=0.1, max_tokens=50)
+            if answer.strip().upper().startswith("YES"):
+                print(f"  📰 뉴스→보유종목 영향 있음 → 파라미터 조정")
+                update_risk_params({
+                    "risk_level": "HIGH",
+                    "pyramiding_allowed": False,
+                })
+        except Exception as e:
+            logger.debug(f"_check_news_impact: {e}")
+
+    def _check_position_alerts(self):
+        """
+        보유 종목의 급변 감지 (가격 급등락, 거래량 폭증).
+        """
+        positions = get_positions()
+        if not positions or not yf:
+            return
+
+        for code, data in list(positions.items())[:5]:  # API 부하 제한
+            try:
+                ticker = f"{code}.KS"
+                d = yf.download(ticker, period="1d", interval="5m",
+                               progress=False, auto_adjust=True)
+                if d is None or len(d) < 2:
+                    continue
+
+                # 최근 5분 변동률
+                latest = float(d["Close"].iloc[-1])
+                prev_5m = float(d["Close"].iloc[-2])
+                chg_5m = (latest - prev_5m) / (prev_5m or 1)
+
+                if abs(chg_5m) >= STOCK_RAPID_ALERT_PCT:
+                    print(f"  🚨 {code}: 5분내 {chg_5m:+.1%} 급변! (경고)")
+                    self._trigger_macro_reanalysis(f"보유종목 {code} 급변 {chg_5m:+.1%}")
+                elif abs(chg_5m) >= STOCK_RAPID_CHANGE_PCT:
+                    print(f"  ⚡ {code}: 5분내 {chg_5m:+.1%} 변동 (주의)")
+
+            except Exception as e:
+                logger.debug(f"_check_position_alerts {code}: {e}")
 
     # ── 4. Risk-Off 선언 ────────────────────────────────────
 
