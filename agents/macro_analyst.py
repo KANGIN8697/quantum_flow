@@ -47,7 +47,7 @@ _REPORT_DIR = os.path.join(
 )
 
 
-# ── GPT 분석 프롬프트 ────────────────────────────────────
+# ── Claude 분석 프롬프트 ────────────────────────────────────
 
 SYSTEM_PROMPT = """당신은 한국 주식시장 전문 거시경제 분석가입니다.
 주어진 거시 지표와 뉴스를 바탕으로 종합 분석 보고서를 작성합니다.
@@ -111,7 +111,7 @@ sector_multipliers 작성 규칙:
 """
 
 
-# ── 1. GPT 분석 요청 ─────────────────────────────────────
+# ── 1. Claude 분석 요청 ─────────────────────────────────────
 
 async def analyze_with_claude(macro_data: dict, news_list: list, urgent_info: dict) -> dict:
     """Claude Sonnet 4.5에게 거시 데이터 + 뉴스를 전달하여 종합 분석"""
@@ -168,7 +168,7 @@ async def analyze_with_claude(macro_data: dict, news_list: list, urgent_info: di
             system=SYSTEM_PROMPT,
             user=user_msg,
             temperature=0.3,
-            max_tokens=3000,
+            max_tokens=8000,
         )
 
         if not analysis:
@@ -229,7 +229,7 @@ def _default_analysis(reason: str) -> dict:
         "confidence": 50,
         "sectors": ["반도체", "2차전지", "바이오"],
         "avoid_sectors": [],
-        "report": f"## 자동 기본값 보고서\n\nGPT 분석을 수행할 수 없어 기본값을 사용합니다.\n\n사유: {reason}",
+        "report": f"## 자동 기본값 보고서\n\nClaude 분석을 수행할 수 없어 기본값을 사용합니다.\n\n사유: {reason}",
         "summary": f"기본값 사용 (Risk-ON). 사유: {reason}",
         "urgent_action": "NONE",
         "reason": reason,
@@ -311,7 +311,7 @@ async def run_macro_analysis() -> dict:
     if urgent_info.get("level") == "CRITICAL":
         print("  🚨 긴급 뉴스 감지! 즉시 분석 진행...")
     
-    # 3) GPT 분석
+    # 3) Claude 분석
     print("\n🤖 Claude Sonnet 4.5 종합 분석 중...")
     analysis = await analyze_with_claude(macro_data, news_list, urgent_info)
     
