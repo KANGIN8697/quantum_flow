@@ -238,3 +238,27 @@ if __name__ == "__main__":
         notify_daily_report(5,3,2,120000,1.2,[{"code":"035420","name":"NAVER","pnl_pct":8.5}])
         print("  모든 알림 전송 완료!")
     print("=" * 55)
+
+
+# ── 거시분석 결과 알림 ──────────────────────────
+def notify_macro_analysis(macro_result: dict, mode: str = "모의투자"):
+    """거시경제 분석 완료 후 텔레그램 알림."""
+    risk = macro_result.get("risk_status", "?")
+    confidence = macro_result.get("confidence", 0)
+    summary = macro_result.get("summary", "요약 없음")
+    sectors = macro_result.get("sectors", [])
+    strategy = macro_result.get("macro_strategy", "")
+    position_pct = macro_result.get("macro_position_pct", 0)
+
+    sector_str = ", ".join(sectors[:5]) if sectors else "없음"
+
+    text = (
+        f"<b>📊 거시경제 분석 완료</b> [{mode}]\n"
+        f"{'─' * 28}\n"
+        f"🔸 판정: <b>Risk-{risk}</b> (확신도 {confidence}%)\n"
+        f"🔸 전략: {strategy} (포지션 {int(position_pct*100)}%)\n"
+        f"🔸 추천섹터: {sector_str}\n"
+        f"{'─' * 28}\n"
+        f"📝 {summary[:200]}"
+    )
+    return _send(text)

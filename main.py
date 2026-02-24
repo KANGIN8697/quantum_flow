@@ -143,6 +143,13 @@ async def job_macro_analysis():
             print(f"  ✅ 결과: Risk-{risk_status}")
             set_macro_snapshot(macro_result)
 
+            # 텔레그램 알림
+            try:
+                from tools.notifier_tools import notify_macro_analysis
+                notify_macro_analysis(macro_result, mode=MODE)
+            except Exception as ntf_err:
+                print(f"  ⚠ 거시분석 텔레그램 알림 실패: {ntf_err}")
+
             # Risk-OFF 긴급 처리
             if get_state("risk_off"):
                 risk_params = get_state("risk_params") or {}

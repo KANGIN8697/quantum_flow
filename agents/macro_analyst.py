@@ -1,5 +1,5 @@
 # agents/macro_analyst.py — 거시경제 분석 에이전트 (Agent 1)
-# Phase 9: FRED API + yfinance + 뉴스 수집 + GPT-4o-mini 종합 분석
+# Phase 9: FRED API + yfinance + 뉴스 수집 + Claude Sonnet 4.5 종합 분석
 # 3페이지 일일 거시경제 보고서 생성
 # 긴급 뉴스 감지 시 HeadStrategist에 알림
 
@@ -12,6 +12,8 @@ import logging
 from tools.utils import safe_float
 
 load_dotenv()
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +113,12 @@ sector_multipliers 작성 규칙:
 
 # ── 1. GPT 분석 요청 ─────────────────────────────────────
 
-async def analyze_with_gpt(macro_data: dict, news_list: list, urgent_info: dict) -> dict:
-    """GPT-4o-mini에게 거시 데이터 + 뉴스를 전달하여 종합 분석"""
+async def analyze_with_claude(macro_data: dict, news_list: list, urgent_info: dict) -> dict:
+    """Claude Sonnet 4.5에게 거시 데이터 + 뉴스를 전달하여 종합 분석"""
     
-    if not OPENAI_API_KEY:
-        print("  ⚠ OPENAI_API_KEY 없음 → 기본값 Risk-ON 반환")
-        return _default_analysis("OPENAI_API_KEY 미설정으로 기본값 사용")
+    if not ANTHROPIC_API_KEY:
+        print("  ⚠ ANTHROPIC_API_KEY 없음 → 기본값 Risk-ON 반환")
+        return _default_analysis("ANTHROPIC_API_KEY 미설정으로 기본값 사용")
     
     # 뉴스 헤드라인 정리 (토큰 절약)
     news_text = ""
@@ -289,7 +291,7 @@ async def run_macro_analysis() -> dict:
     """
     거시 분석 전체 파이프라인을 실행한다.
     1) FRED + yfinance + 뉴스 데이터 수집 (주말에도 동작)
-    2) GPT-4o-mini로 종합 분석 + 3페이지 보고서 생성
+    2) Claude Sonnet 4.5로 종합 분석 + 3페이지 보고서 생성
     3) 긴급 뉴스 감지 시 즉시 알림
     4) JSON + MD 파일 저장
     """
@@ -310,8 +312,8 @@ async def run_macro_analysis() -> dict:
         print("  🚨 긴급 뉴스 감지! 즉시 분석 진행...")
     
     # 3) GPT 분석
-    print("\n🤖 GPT-4o-mini 종합 분석 중...")
-    analysis = await analyze_with_gpt(macro_data, news_list, urgent_info)
+    print("\n🤖 Claude Sonnet 4.5 종합 분석 중...")
+    analysis = await analyze_with_claude(macro_data, news_list, urgent_info)
     
     # 4) shared_state 업데이트
     risk_label = analysis.get("risk", "ON")
@@ -462,7 +464,7 @@ async def test():
     
     print("\n" + "=" * 60)
     print("  ✅ MacroAnalyst 테스트 완료!")
-    print(f"  💡 OPENAI_API_KEY 없으면 기본값(Risk-ON) 반환됨")
+    print(f"  💡 ANTHROPIC_API_KEY 없으면 기본값(Risk-ON) 반환됨")
     print("=" * 60)
 
 if __name__ == "__main__":
