@@ -2,7 +2,7 @@
 # 공휴일 + 주말을 고려하여 장이 열리는 날인지 판단한다.
 # 매년 초 HOLIDAYS 딕셔너리를 업데이트하면 된다.
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, time as dtime
 
 KST = timezone(timedelta(hours=9))
 
