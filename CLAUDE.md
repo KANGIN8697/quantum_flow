@@ -7,6 +7,18 @@
 - **Agent 3** (head_strategist): 전략 결정 → LLM 없음 (룰 기반)
 - **Agent 4** (market_watcher): 시장 감시 → GPT-4o-mini
 
+## API 키 위치
+**루트 `.env` 파일** (`quantum_flow/.env` 또는 상위 `.env`)에 모든 키 등록됨:
+- `KIS_APP_KEY` / `KIS_APP_SECRET` — 한국투자증권 실전
+- `KIS_PAPER_APP_KEY` / `KIS_PAPER_APP_SECRET` — 모의투자
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — 텔레그램 알림
+- `ANTHROPIC_API_KEY` — Claude API (Agent 1,2 분석 + 백테스트 LLM)
+- `OPENAI_API_KEY` — GPT-4o-mini (Agent 4)
+- `DART_API_KEY` — DART 공시 OpenAPI (발급: opendart.fss.or.kr)
+- `FRED_API_KEY` — FRED 매크로 데이터 (선택)
+
+**GitHub Secrets에도 등록됨** (CI/CD용). 로컬에서는 `.env` 참조.
+
 ## 디렉토리 구조
 ```
 quantum_flow/
@@ -30,14 +42,93 @@ quantum_flow/
 │   ├── trade_logger.py      # 매매 기록
 │   ├── dashboard_tools.py   # 대시보드 이미지 생성
 │   ├── macro_data_tools.py  # FRED/yfinance 데이터 수집
-│   ├── news_tools.py        # 뉴스/RSS 수집
+│   ├── news_tools.py        # 뉴스/RSS 수집 + DART 공시
 │   ├── intraday_tools.py    # 분봉 데이터
 │   ├── market_calendar.py   # 개장일 판단
 │   ├── websocket_feeder.py  # 실시간 체결 피드
+│   ├── abnormal_detector.py # 이상 거래 감지 (거래량 급증, 가격 갭, VI)
+│   ├── performance_reporter.py # 성과 리포트 (Sharpe, MDD, 승률)
+│   ├── position_scaler.py   # 5단계 포지션 스케일링
+│   ├── sector_rotation.py   # ETF 모멘텀 섹터 로테이션
 │   └── utils.py             # safe_float 등 유틸
+├── backtest/                # ★ 백테스트 시스템 (아래 상세)
 ├── data_collector/          # 데이터 수집 파이프라인
+│   └── text/dart_collector.py  # DART 공시 수집
 ├── database/                # DB 관리
 └── tasks/                   # CrewAI 태스크 정의
+```
+
+## 백테스트 시스템 (`backtest/`)
+
+키움증권 수집 데이터 + 과거 뉴스/DART 공시로 Agent 1→2 파이프라인 성과를 측정.
+
+### 파일 구조
+```
+backtest/
+├── __init__.py
+├── run_backtest.py      # CLI 진입점
+├── engine.py            # 메인 루프 (랜덤 날짜→매크로분석→종목선정→수익률)
+├── data_loader.py       # 키움 CSV + FRED/yfinance 데이터 로더
+├── news_crawler.py      # Google News RSS 날짜별 크롤링 + JSON 캐시
+├── dart_crawler.py      # DART 공시 날짜별 조회 + JSON 캐시
+├── mock_provider.py     # Agent 입력 데이터 프로바이더 (MockMacro/Scanner/LLM)
+├── report.py            # 성과 집계 + HTML 리포트
+├── cache/               # 뉴스/DART/yfinance 캐시 (자동 생성)
+└── results/             # 결과 JSON + HTML (자동 생성)
+```
+
+### 실행 방법
+```bash
+cd quantum_flow
+
+# 기본 (규칙 기반, 실제 뉴스+DART, 10일 테스트)
+python -m backtest.run_backtest --csv-dir ../collected_data --dates 10
+
+# 실제 Claude API 사용 (뉴스+DART+LLM 분석)
+python -m backtest.run_backtest --csv-dir ../collected_data --dates 50 --llm
+
+# 빠른 테스트 (뉴스/DART 끄기)
+python -m backtest.run_backtest --csv-dir ../collected_data --dates 5 --no-news --no-dart
+
+# 옵션
+#   --llm          : 실제 Claude API 사용 (ANTHROPIC_API_KEY 필요, 비용 발생)
+#   --no-news      : 뉴스 크롤링 비활성화 (가상 뉴스)
+#   --no-dart      : DART 공시 비활성화
+#   --forward-days : 수익률 측정 기간 (기본 5일)
+#   --seed         : 랜덤 시드 (기본 42)
+```
+
+### 데이터 소스
+| 소스 | 키 필요 | 수집량 | 비고 |
+|---|---|---|---|
+| 키움 CSV (collected_data/daily/) | 없음 | ~4,200종목 × 600일 | 로컬 파일 |
+| yfinance (VIX,DXY,KOSPI 등) | 없음 | 6개 시리즈 | 자동 캐싱 |
+| FRED 매크로 | FRED_API_KEY | 16개 시리즈 | 선택 |
+| Google News RSS | 없음 | 날짜당 120~300건 | 자동 캐싱 |
+| DART 공시 | DART_API_KEY | 날짜당 200~600건 | 자동 캐싱 |
+
+### 키움 CSV 데이터 (collected_data/)
+- `collect_kiwoom_all.py`로 수집 (Windows + pykiwoom)
+- `--resume` 플래그로 중단 후 재개 가능
+- 컬럼: `종목코드,close,volume,거래대금,date,open,high,low,...,ticker`
+- date: YYYYMMDD 형식, next=0만 사용 (종목당 ~600일)
+- `merge_csv.py` — 개별 CSV를 하나로 합치기
+
+### 백테스트 파이프라인 흐름
+```
+1. 키움 CSV 전체 로드 (4,200종목)
+2. yfinance/FRED 매크로 데이터 다운로드 (캐싱)
+3. 랜덤 테스트 날짜 N개 선택
+4. 각 날짜마다:
+   a. Google News RSS 크롤링 (경제/섹터 키워드 9개)
+   b. DART 공시 조회 (3일 lookback, HIGH/MEDIUM 필터)
+   c. Agent 1 매크로 분석 (LLM or 규칙 기반)
+   d. 거래량 Top 50 종목 추출
+   e. 기술적 필터 (Donchian 95% + RSI 50~70)
+   f. Agent 2 종목 선정 (LLM or 점수 기반, 최대 10개)
+   g. 5일 후 수익률 측정
+5. 성과 집계 (평균수익, 벤치마크, 초과수익, 승률)
+6. HTML 리포트 생성
 ```
 
 ## 하이브리드 LLM 아키텍처
@@ -53,14 +144,6 @@ quantum_flow/
 ### cost_tracker.py (tools/cost_tracker.py)
 싱글턴 `get_cost_tracker()`. `record(model, input_tokens, output_tokens)` 호출마다 비용 계산.
 `daily_summary()` → 모델별 집계. `reset()` → 일일 리셋 (main.py job_daily_report에서 호출).
-
-### 환경변수
-```
-ANTHROPIC_API_KEY=     # Claude Sonnet용
-OPENAI_API_KEY=        # GPT-4o-mini용
-ANALYSIS_MODEL=claude-sonnet-4-5-20250929   # Agent 1,2
-SENTINEL_MODEL=gpt-4o-mini                  # Agent 4
-```
 
 ## 에이전트 파이프라인
 
@@ -101,7 +184,7 @@ SENTINEL_MODEL=gpt-4o-mini                  # Agent 4
 - writes: `risk_off`, `risk_off_time`, `recovery_state`, `reentry_count`
 - `update_risk_params()` 호출하여 risk_params 갱신
 
-### LLM 호출 위치 (수정된 코드)
+### LLM 호출 위치
 | Agent | 함수 | LLM 메서드 | 용도 |
 |-------|------|-----------|------|
 | Agent 1 | `run_macro_analysis()` | `llm.analyze_json()` via `asyncio.to_thread()` | 거시경제 종합 분석 |
@@ -110,6 +193,11 @@ SENTINEL_MODEL=gpt-4o-mini                  # Agent 4
 | Agent 4 | `_check_llm_recovery()` | `llm.classify()` | Recovery 안정화 판단 |
 
 ## 핵심 비즈니스 규칙
+
+### 진입 조건 (3중 AND 필터)
+- 돈치안 채널 돌파 + 거래량 200%↑ + 틱속도 5건/초
+- 다중 타임프레임: 60분봉(대추세) → 15분봉(파동) → 5분봉(타점)
+- 보조: VWAP 상방, ADX 25↑, RSI, 볼린저밴드, 체결강도 100%↑
 
 ### 포지션 관리
 - 최대 보유 종목: 5개 (`MAX_POSITIONS`)
@@ -123,18 +211,16 @@ SENTINEL_MODEL=gpt-4o-mini                  # Agent 4
 - 트레일링: 최고가 - 3×ATR
 - 타임 디케이: Day 1→2.0×ATR, Day 2→1.0×ATR, Day 3→+0.3×ATR
 - 추가매수 후: 평단 -3%
+- Time-Stop: 2일 미진입 시 기계적 매도
+
+### 오버나이트
+- +7% 이상 수익 시 보유, 익일 트레일링 스탑 -5%
+- 스코어링 (60점 이상 시 홀딩): 수익률 25점 + 뉴스 25점 + 차트 추세 25점 + 거래량 25점
 
 ### Risk-Off 이중 검증
-1. 정량 트리거 (4개 중 2개 이상):
-   - VIX 전일 대비 +20%
-   - KOSPI 당일 -2%
-   - 달러/원 ±15원
-   - 시총 상위 10종목 중 7개 하락
+1. 정량 트리거 (4개 중 2개 이상): VIX +20%, KOSPI -2%, 달러/원 ±15원, 시총 상위 10종목 중 7개 하락
 2. LLM 검증 (GPT-4o-mini): YES/NO 판단
 3. 60초 유예 후 재확인
-
-### 오버나이트 스코어링 (60점 이상 시 홀딩)
-- 수익률 25점 + 뉴스 25점 + 차트 추세 25점 + 거래량 25점
 
 ## 코딩 컨벤션
 
@@ -146,14 +232,15 @@ SENTINEL_MODEL=gpt-4o-mini                  # Agent 4
 5. **Agent 4는 정량 트리거 먼저, LLM은 보조** — 이중 검증 패턴 유지
 6. **async 주의**: macro_analyst는 async (asyncio.to_thread로 동기 llm 호출)
 7. **환경변수로 모델 교체 가능** — `ANALYSIS_MODEL`, `SENTINEL_MODEL`
+8. **secrets는 절대 하드코딩 금지** — 항상 os.getenv() 또는 .env 파일
+9. **dry_run 파라미터** — 모든 주문 함수에 포함 (True면 로그만 출력)
+10. **USE_PAPER=true 기본값 유지** — 모의투자 우선
 
 ### shared_state 접근
 ```python
 from shared_state import get_state, set_state, update_risk_params
 from shared_state import get_positions, add_position, remove_position
 ```
-- `set_state(key, value)` — NOT `write_state`
-- `update_risk_params(dict)` — risk_params 부분 업데이트
 
 ### 텔레그램 알림
 ```python
@@ -169,6 +256,12 @@ python -c "from agents.macro_analyst import run_macro_analysis; print('OK')"
 python -c "from agents.market_scanner import market_scanner_run; print('OK')"
 python -c "from agents.market_watcher import MarketWatcher; print('OK')"
 
+# 백테스트 (가장 빠른 테스트)
+python -m backtest.run_backtest --csv-dir ../collected_data --dates 5 --no-news --no-dart
+
+# 백테스트 (실제 데이터 + LLM)
+python -m backtest.run_backtest --csv-dir ../collected_data --dates 50 --llm
+
 # 단일 실행 (--once 모드)
 python main.py --once
 ```
@@ -179,5 +272,5 @@ pip install -r requirements.txt
 cp .env.template .env   # API 키 입력
 ```
 
-필수: `KIS_APP_KEY`, `KIS_APP_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
-선택: `FRED_API_KEY`, `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`
+필수: `KIS_APP_KEY`, `KIS_APP_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY`
+선택: `OPENAI_API_KEY`, `DART_API_KEY`, `FRED_API_KEY`
