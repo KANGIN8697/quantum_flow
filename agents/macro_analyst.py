@@ -13,7 +13,7 @@ from tools.utils import safe_float
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 logger = logging.getLogger(__name__)
 
@@ -344,13 +344,56 @@ async def run_macro_analysis() -> dict:
         macro_strategy = "중립"
         macro_position_pct = 0.5
 
+    # ── regime 필드: confidence 기반 명시적 레짐 분류 ──
+    # head_strategist의 Neutral 필터가 strategy+risk 조합 대신 이 필드를 참조
+    if confidence >= 70 and risk_label == "ON":
+        macro_regime = "Bull"
+    elif confidence < 40 or risk_label == "OFF" or urgent_action in ("EXIT_ALL", "REDUCE"):
+        macro_regime = "Bear"
+    else:
+        macro_regime = "Neutral"  # confidence 40~69 또는 risk 불명확
+
+    # USD/KRW, KOSPI 5일 변동률 추출 (head_strategist 매크로 필터용)
+    usdkrw_change = 0.0
+    kospi_daily_change = 0.0
+    for k, v in macro_data.items():
+        if "USD/KRW" in k or "달러" in k or "USDKRW" in k:
+            chg = v.get("change_pct", 0)
+            if isinstance(chg, (int, float)):
+                usdkrw_change = chg
+        if "KOSPI" in k or "코스피" in k:
+            chg = v.get("change_pct", 0)
+            if isinstance(chg, (int, float)):
+                kospi_daily_change = chg
+
+    # KOSPI 실제 5일 누적 변화율 계산 (yfinance 사용)
+    kospi_5d_change = 0.0
+    try:
+        import yfinance as yf
+        ks = yf.download("^KS11", period="10d", interval="1d",
+                         progress=False)
+        if ks is not None and len(ks) >= 5:
+            close_now = float(ks["Close"].iloc[-1])
+            close_5d_ago = float(ks["Close"].iloc[-5])
+            if close_5d_ago > 0:
+                kospi_5d_change = ((close_now - close_5d_ago) / close_5d_ago) * 100
+                print(f"  📊 KOSPI 5일 변화율: {kospi_5d_change:+.2f}%")
+        else:
+            kospi_5d_change = kospi_daily_change  # 폴백: 일간 변화율
+    except Exception as e:
+        kospi_5d_change = kospi_daily_change  # 폴백: 일간 변화율
+        logger.debug(f"KOSPI 5일 변화율 계산 실패 (폴백: 일간): {e}")
+
     set_state("macro_result", {
         "strategy": macro_strategy,
+        "regime": macro_regime,          # 명시적 레짐 (Bull/Neutral/Bear)
         "position_size_pct": macro_position_pct,
         "sectors": analysis.get("sectors", []),
         "avoid_sectors": analysis.get("avoid_sectors", []),
         "confidence": confidence,
         "risk": risk_label,
+        "usdkrw_change_pct": usdkrw_change,
+        "kospi_5d_change_pct": kospi_5d_change,
     })
 
     # [기능6] 섹터 멀티플라이어 저장 (검증 + 클리핑)
@@ -594,5 +637,4 @@ if __name__ == "__main__":
     asyncio.run(test())
 
 
-# Wrapper for main.py compatibility
-macro_analyst_run = run_macro_analysis
+# macro_analyst_run은 위에 async def로 정의됨 (main.py 호환 래퍼)

@@ -27,8 +27,10 @@ try:
         MAX_WATCH_STOCKS, DONCHIAN_PERIOD, RSI_LOWER, RSI_UPPER,
         SECTOR_DELTA_BONUS_MAX, SECTOR_DELTA_BONUS_MIN,
         SECTOR_MORNING_TIME, SECTOR_MIDDAY_TIME,
+        VOLUME_SURGE_RATIO, CHG_STRENGTH_THRESHOLD,
+        TF15_MA_SHORT, TF15_MA_MID, TF15_MA_LONG,
     )
-    from shared_state import set_state, get_state
+    from shared_state import set_state, get_state, get_tf15_trend
     from tools.scanner_tools import calc_donchian, calc_rsi
     from tools.token_manager import ensure_token
     from tools.notifier_tools import notify_error
@@ -41,8 +43,14 @@ except ImportError:
     SECTOR_DELTA_BONUS_MIN = 2
     SECTOR_MORNING_TIME    = "09:20"
     SECTOR_MIDDAY_TIME     = "11:30"
+    VOLUME_SURGE_RATIO     = 1.5
+    CHG_STRENGTH_THRESHOLD = 0.70
+    TF15_MA_SHORT  = 3
+    TF15_MA_MID    = 8
+    TF15_MA_LONG   = 20
     def set_state(k, v): pass
     def get_state(k): return None
+    def get_tf15_trend(code): return {}
     def calc_donchian(df, **k): return {"upper": 0, "lower": 0}
     def calc_rsi(df, **k): return 50.0
     def ensure_token(): return ""
@@ -58,9 +66,11 @@ except ImportError:
 
 
 from tools.llm_client import get_llm_client
+from tools.utils import safe_float
 
 USE_PAPER      = os.getenv("USE_PAPER", "true").lower() == "true"
 MODE_LABEL     = "모의투자" if USE_PAPER else "실전투자"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 if USE_PAPER:
     BASE_URL   = "https://openapivts.koreainvestment.com:29443"
@@ -234,6 +244,33 @@ def apply_tech_filter(candidates: list, max_out: int = 40) -> list:
                 if item.get("volume", 0) > 1000000:
                     score += 15
                     reasons.append("high_vol(+15)")
+                # ── [백테스트 기반] 체결강도 보너스 점수 ──────────────────
+                # 백테스트 결과: 체결강도 ≥0.70 이 다른 필터보다 일관되게 우수
+                chg_str = item.get("chg_strength", 0.0)
+                if isinstance(chg_str, (int, float)):
+                    if chg_str >= CHG_STRENGTH_THRESHOLD:
+                        score += 25
+                        reasons.append(f"chg_str({chg_str:.2f},+25)")
+                    elif chg_str >= 0.55:
+                        score += 10
+                        reasons.append(f"chg_str({chg_str:.2f},+10)")
+
+                # ── [백테스트 기반] 거래량 비율 점수 ──────────────────────
+                vol_ratio = item.get("vol_ratio", 0.0)
+                if isinstance(vol_ratio, (int, float)) and vol_ratio >= VOLUME_SURGE_RATIO:
+                    score += 15
+                    reasons.append(f"vol_surge({vol_ratio:.1f}x,+15)")
+
+                # ── [2트랙] 15분봉 정배열 보너스 ──────────────────────
+                # 백테스트: 15분봉 MA3>MA8>MA20 시 승률 +13%p
+                tf15 = get_tf15_trend(code)
+                if tf15 and tf15.get("aligned", False):
+                    score += 30
+                    reasons.append("tf15_aligned(+30)")
+                elif tf15 and tf15.get("trend") == "DOWN":
+                    score -= 15
+                    reasons.append("tf15_down(-15)")
+
                 item["score"] = score
                 item["reasons"] = reasons
                 passed.append(item)
@@ -476,7 +513,9 @@ async def run_scanner(round_label: str = "1차") -> list:
             c["eval_score"] = ev.get("total_score", 0)
             c["eval_action"] = ev.get("action", "")
             c["position_pct"] = ev.get("position_pct", 0.5)
-            c["sector"] = ev.get("details", {}).get("sector", {}).get("sector", "")
+            _details = ev.get("details")
+            _sec = _details.get("sector", {}) if isinstance(_details, dict) else {}
+            c["sector"] = _sec.get("sector", "") if isinstance(_sec, dict) else ""
             c["entry_atr"] = 0  # ATR은 실시간 데이터에서 채워짐
         # D/F 등급 필터링
         before_cnt = len(filtered)
@@ -573,6 +612,7 @@ async def run_emergency_rescan(reason: str) -> dict:
     
     # 2. 현재 감시 종목들 재평가 (D/F 등급 탈락)
     print(f"  📊 감시 종목 {len(current_watch)}개 재평가 중...")
+    eval_map = {}  # 스코프 보장: try 실패 시에도 빈 dict 유지
     try:
         macro_sectors_list = get_state("macro_sectors") or []
         avoid_sectors_list = get_state("macro_avoid_sectors") or []
@@ -582,7 +622,7 @@ async def run_emergency_rescan(reason: str) -> dict:
             "avoid_sectors": avoid_sectors_list,
             "sector_multipliers": sector_multipliers,
         }
-        
+
         eval_results = evaluate_multiple(current_watch, macro_sectors)
         eval_map = {r["code"]: r for r in eval_results}
         
@@ -632,13 +672,16 @@ async def run_emergency_rescan(reason: str) -> dict:
     # scanner_result도 업데이트
     scanner_selected = []
     for code in new_watch:
-        ev = eval_map.get(code, {}) if 'eval_map' in dir() else {}
+        ev = eval_map.get(code, {})
+        _details = ev.get("details")
+        _sec = _details.get("sector", {}) if isinstance(_details, dict) else {}
+        _sector_name = _sec.get("sector", "") if isinstance(_sec, dict) else ""
         scanner_selected.append({
             "code": code,
             "eval_grade": ev.get("grade", "?"),
             "eval_score": ev.get("total_score", 0),
             "position_pct": ev.get("position_pct", 0.5),
-            "sector": ev.get("details", {}).get("sector", {}).get("sector", ""),
+            "sector": _sector_name,
             "entry_atr": 0,
         })
     set_state("scanner_result", {"selected": scanner_selected})
@@ -704,7 +747,3 @@ if __name__ == "__main__":
     asyncio.run(test())
 
 
-# Wrapper for main.py compatibility
-async def market_scanner_run():
-    result = await run_scanner()
-    return {"candidates": result}

@@ -76,7 +76,7 @@ def fetch_ohlcv(code: str, period: str = "3mo") -> Optional["pd.DataFrame"]:
         return None
     try:
         ticker = _to_yf_ticker(code)
-        df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+        df = yf.download(ticker, period=period, progress=False)
         if df is None or df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):

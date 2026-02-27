@@ -1,6 +1,6 @@
-# tools/trade_logger.py â ì¼ì¼ ë§¤ë§¤ ê¸°ë¡ ë¡ê±°
-# ì¥ ì¤ ëª¨ë  ë§¤ë§¤ ì´ë²¤í¸ë¥¼ ìì§íê³ , ì¥ ë§ê° í ë¶ìì© JSON íì¼ë¡ ì ì¥
-# ë§¤ì¼ Claudeì í¨ê» ë³µê¸°/ê°ì ì  ë¶ìì íì©
+# tools/trade_logger.py — 일일 매매 기록 로거
+# 장 중 모든 매매 이벤트를 수집하고, 장 마감 후 분석용 JSON 파일로 저장
+# 매일 Claude와 함께 복기/개선점 분석에 활용
 
 import json
 import os
@@ -9,19 +9,19 @@ from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
 
-# ââ ì ì¥ ê²½ë¡ âââââââââââââââââââââââââââââââââââââââââ
+# ── 저장 경로 ─────────────────────────────────────────
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "outputs", "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# ââ ê¸ë¡ë² ì¼ì¼ ë¡ê·¸ ââââââââââââââââââââââââââââââââââ
+# ── 글로벌 일일 로그 ──────────────────────────────────
 _lock = threading.Lock()
 _daily_log = {
     "date": None,
-    "trades": [],           # ê°ë³ ë§¤ë§¤ ì´ë²¤í¸ ëª©ë¡
-    "signals": [],          # ë°ìí ì í¸ (ë§¤ì ë¯¸ì¤í í¬í¨)
-    "risk_events": [],      # ë¦¬ì¤í¬ ì´ë²¤í¸ (risk-off, ë´ì¤ ê²½ë³´ ë±)
-    "macro_snapshot": {},   # ì¥ ìì ì ë§¤í¬ë¡ ë°ì´í° ì¤ëì·
-    "performance": {},      # ì¥ ë§ê° ì ì±ê³¼ ìì½
+    "trades": [],           # 개별 매매 이벤트 목록
+    "signals": [],          # 발생한 신호 (매수 미실행 포함)
+    "risk_events": [],      # 리스크 이벤트 (risk-off, 뉴스 경보 등)
+    "macro_snapshot": {},   # 장 시작 시 매크로 데이터 스냅샷
+    "performance": {},      # 장 마감 시 성과 요약
 }
 
 
@@ -34,7 +34,7 @@ def _now_str() -> str:
 
 
 def _ensure_date():
-    """ë ì§ê° ë°ëë©´ ë¡ê·¸ ì´ê¸°í"""
+    """날짜가 바뀌면 로그 초기화"""
     today = _today_str()
     if _daily_log["date"] != today:
         _daily_log["date"] = today
@@ -46,27 +46,27 @@ def _ensure_date():
 
 
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-#  ë§¤ë§¤ ê¸°ë¡ í¨ìë¤
+#  매매 기록 함수들
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def log_trade(action: str, code: str, **kwargs):
     """
-    ë§¤ë§¤ ì´ë²¤í¸ ê¸°ë¡
+    매매 이벤트 기록
 
     Parameters:
         action: "BUY" | "SELL" | "STOP_LOSS" | "FORCE_CLOSE" | "PYRAMID"
-        code: ì¢ëª©ì½ë (ì: "005930")
-        **kwargs: ì¶ê° ì ë³´
-            - price: ì²´ê²°ê°
+        code: 종목코드 (예: "005930")
+        **kwargs: 추가 정보
+            - price: 체결가
             - quantity: ìë
             - position_pct: í¬ì§ì ë¹ì¨
             - eval_grade: íê° ë±ê¸ (A+, A, B, C, D, F)
             - eval_score: íê° ì ì
-            - reason: ë§¤ë§¤ ì¬ì 
-            - profit_pct: ì¤í ììµë¥  (ë§¤ë ì)
+            - reason: 매매 사유
+            - profit_pct: 실현 수익률 (매도 시)
             - sector: ì¹í°
-            - strategy: ì ëµ (ê³µê²©ì /ì¤ë¦½/ë°©ì´ì )
-            - entry_price: ì§ìê° (ë§¤ë ì ì°¸ì¡°)
+            - strategy: 전략 (공격적/중립/방어적)
+            - entry_price: 진입가 (매도 시 참조)
     """
     with _lock:
         _ensure_date()
@@ -82,10 +82,10 @@ def log_trade(action: str, code: str, **kwargs):
 
 def log_signal(code: str, signal_type: str, **kwargs):
     """
-    ë§¤ì/ë§¤ë ì í¸ ê¸°ë¡ (ì¤í ì¬ë¶ì ë¬´ê´íê² ëª¨ë  ì í¸ë¥¼ ê¸°ë¡)
+    매수/매도 신호 기록 (실행 여부와 무관하게 모든 신호를 기록)
 
     Parameters:
-        code: ì¢ëª©ì½ë
+        code: 종목코드
         signal_type: "BUY_SIGNAL" | "SELL_SIGNAL" | "PYRAMID_SIGNAL" | "STOP_SIGNAL"
         **kwargs:
             - executed: True/False (ì¤ì  ì¤í ì¬ë¶)
@@ -108,7 +108,7 @@ def log_signal(code: str, signal_type: str, **kwargs):
 
 def log_risk_event(event_type: str, **kwargs):
     """
-    ë¦¬ì¤í¬ ì´ë²¤í¸ ê¸°ë¡
+    리스크 이벤트 기록
 
     Parameters:
         event_type: "RISK_OFF" | "RISK_LEVEL_CHANGE" | "NEWS_ALERT" |
@@ -130,7 +130,7 @@ def log_risk_event(event_type: str, **kwargs):
 
 
 def set_macro_snapshot(macro_data: dict):
-    """ì¥ ìì ì ë§¤í¬ë¡ ë°ì´í° ì¤ëì· ì ì¥"""
+    """장 시작 시 매크로 데이터 스냅샷 저장"""
     with _lock:
         _ensure_date()
         _daily_log["macro_snapshot"] = macro_data
@@ -142,10 +142,10 @@ def set_macro_snapshot(macro_data: dict):
 
 def calculate_performance(final_positions: dict = None, daily_loss: float = 0.0):
     """
-    ì¥ ë§ê° ì ì¼ì¼ ì±ê³¼ ìì½ ê³ì°
+    장 마감 시 일일 성과 요약 계산
 
     Parameters:
-        final_positions: ì¥ ë§ê° ì ìì¡´ í¬ì§ì {code: {...}}
+        final_positions: 장 마감 시 잔존 포지션 {code: {...}}
         daily_loss: ë¹ì¼ ì¤í ìì¤ë¥ 
 
     Returns:
@@ -155,7 +155,7 @@ def calculate_performance(final_positions: dict = None, daily_loss: float = 0.0)
         _ensure_date()
         trades = _daily_log["trades"]
 
-        # ë§¤ë§¤ íµê³
+        # 매매 통계
         buys = [t for t in trades if t["action"] == "BUY"]
         sells = [t for t in trades if t["action"] in ("SELL", "STOP_LOSS", "FORCE_CLOSE")]
         pyramids = [t for t in trades if t["action"] == "PYRAMID"]
@@ -177,7 +177,7 @@ def calculate_performance(final_positions: dict = None, daily_loss: float = 0.0)
             reason = s.get("skip_reason", "unknown")
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
-        # ë±ê¸ë³ ë§¤ë§¤ ë¶í¬
+        # 등급별 매매 분포
         grade_distribution = {}
         for t in buys:
             grade = t.get("eval_grade", "N/A")
@@ -185,7 +185,7 @@ def calculate_performance(final_positions: dict = None, daily_loss: float = 0.0)
 
         perf = {
             "date": _daily_log["date"],
-            # ë§¤ë§¤ ê±´ì
+            # 매매 건수
             "total_trades": len(trades),
             "buy_count": len(buys),
             "sell_count": len(sells),
@@ -223,10 +223,10 @@ def calculate_performance(final_positions: dict = None, daily_loss: float = 0.0)
 
 def export_daily_report() -> str:
     """
-    ì¼ì¼ ë§¤ë§¤ ë¦¬í¬í¸ë¥¼ JSON íì¼ë¡ ì ì¥
+    일일 매매 리포트를 JSON 파일로 저장
 
     Returns:
-        ì ì¥ë íì¼ ê²½ë¡
+        저장된 파일 경로
     """
     with _lock:
         _ensure_date()
@@ -257,13 +257,13 @@ def export_daily_report() -> str:
 
 def load_daily_report(date_str: str) -> dict:
     """
-    í¹ì  ë ì§ì ë¦¬í¬í¸ë¥¼ ë¡ë
+    특정 날짜의 리포트를 로드
 
     Parameters:
         date_str: "2026-02-21" íì
 
     Returns:
-        ë¦¬í¬í¸ ëìëë¦¬ (ìì¼ë©´ ë¹ ëìëë¦¬)
+        리포트 딕셔너리 (없으면 빈 딕셔너리)
     """
     filepath = os.path.join(REPORTS_DIR, f"trade_log_{date_str}.json")
     if os.path.exists(filepath):
@@ -274,10 +274,10 @@ def load_daily_report(date_str: str) -> dict:
 
 def load_recent_reports(days: int = 5) -> list:
     """
-    ìµê·¼ Nì¼ê° ë¦¬í¬í¸ë¥¼ ë¡ë
+    최근 N일간 리포트를 로드
 
     Parameters:
-        days: ë¡ëí  ì¼ì (ê¸°ë³¸ 5ì¼)
+        days: 로드할 일수 (기본 5일)
 
     Returns:
         ë¦¬í¬í¸ ë¦¬ì¤í¸ (ìµì ì)
@@ -294,7 +294,7 @@ def load_recent_reports(days: int = 5) -> list:
 
 def get_cumulative_stats(days: int = 20) -> dict:
     """
-    ìµê·¼ Nì¼ ëì  íµê³ â ì¥ê¸° ì¶ì¸ ë¶ìì©
+    최근 N일 누적 통계 — 장기 추세 분석용
 
     Returns:
         ëì  íµê³ ëìëë¦¬
@@ -360,7 +360,7 @@ def get_cumulative_stats(days: int = 20) -> dict:
 
 
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-#  ì¥ ë§ê° ë£¨í´ (main.pyìì í¸ì¶)
+#  장 마감 루틴 (main.py에서 호출)
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def get_daily_trades() -> list:
@@ -372,13 +372,13 @@ def get_daily_trades() -> list:
 
 def end_of_day_routine(positions: dict = None, daily_loss: float = 0.0):
     """
-    ì¥ ë§ê° ì í¸ì¶ëë íµí© ë£¨í´
+    장 마감 시 호출되는 통합 루틴
     1) ì±ê³¼ ê³ì°
     2) JSON ë¦¬í¬í¸ ì ì¥
-    3) íì¼ ê²½ë¡ ë°í
+    3) 파일 경로 반환
 
     Parameters:
-        positions: ì¥ ë§ê° ì ìì¡´ í¬ì§ì
+        positions: 장 마감 시 잔존 포지션
         daily_loss: ë¹ì¼ ëì  ì¤í ìì¤
 
     Returns:

@@ -139,7 +139,7 @@ def download_yf_history(start_date: str, end_date: str,
     for name, symbol in YF_SYMBOLS.items():
         try:
             df = yf.download(symbol, start=start_date, end=end_date,
-                             progress=False, auto_adjust=True)
+                             progress=False)
             if df is not None and not df.empty:
                 series = {}
                 for idx, row in df.iterrows():

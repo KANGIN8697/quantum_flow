@@ -36,7 +36,7 @@ RECONNECT_DELAY = 1
 class KISWebSocketFeeder:
     """
     KIS 웹소켓으로 실시간 체결가 + 호가를 수신하는 피더.
-    자동 재연결 및 틱 속도 계산 기능 포함.
+    자동 재연결, 틱 속도 계산, 체결강도 콜백 기능 포함.
     """
 
     def __init__(self, stock_codes: list):
@@ -50,6 +50,8 @@ class KISWebSocketFeeder:
         self._tick_timestamps: dict = {
             code: deque(maxlen=100) for code in stock_codes
         }
+        # 체결강도 콜백 (MarketWatcher._update_chg_strength_from_ws 등록용)
+        self._chg_callback = None
 
     async def connect(self):
         from tools.token_manager import get_websocket_approval_key
@@ -106,10 +108,33 @@ class KISWebSocketFeeder:
             }
             if code in self._tick_timestamps:
                 self._tick_timestamps[code].append(now)
+
+            # ── 체결강도 계산 (누적매수/누적매도) ─────────────
+            # KIS H0STCNT0 필드: [15]=누적매수체결량, [16]=누적매도체결량
+            if len(fields) >= 17:
+                try:
+                    cum_buy = safe_float(fields[15])
+                    cum_sell = safe_float(fields[16])
+                    if cum_sell > 0:
+                        chg_strength = cum_buy / cum_sell
+                    elif cum_buy > 0:
+                        chg_strength = 2.0  # 매도 0이면 강한 매수 우위
+                    else:
+                        chg_strength = 1.0  # 둘 다 0이면 중립
+
+                    self._prices[code]["chg_strength"] = round(chg_strength, 4)
+
+                    # 콜백이 등록되어 있으면 shared_state에 전달
+                    if self._chg_callback:
+                        self._chg_callback(code, chg_strength)
+                except (ValueError, IndexError):
+                    pass
+
             print(
                 f"  💹 [{code}] 체결가: {int(price):,}원  "
                 f"거래량: {int(volume):,}  "
                 f"틱속도: {self.get_tick_speed(code):.1f}/초  "
+                f"CHG: {self._prices[code].get('chg_strength', 0):.2f}  "
                 f"{datetime.now().strftime('%H:%M:%S')}"
             )
         elif tr_id == TR_QUOTE and len(fields) >= 14:
@@ -157,6 +182,15 @@ class KISWebSocketFeeder:
         if self.ws:
             await self.ws.close()
         print(f"🛑 [{MODE_LABEL}] 웹소켓 수신 종료")
+
+    def register_chg_callback(self, callback):
+        """
+        체결강도 업데이트 콜백 등록.
+        callback(code: str, strength: float) 형태의 함수를 전달.
+        MarketWatcher._update_chg_strength_from_ws를 여기에 등록한다.
+        """
+        self._chg_callback = callback
+        logger.info("체결강도 콜백 등록 완료")
 
     def get_latest_price(self, code: str) -> dict:
         return self._prices.get(code, {})

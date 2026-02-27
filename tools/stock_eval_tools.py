@@ -117,7 +117,7 @@ def fetch_price_data(code: str, period: str = "6mo") -> Optional["pd.DataFrame"]
 
     try:
         ticker = _to_yf_ticker(code)
-        df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+        df = yf.download(ticker, period=period, progress=False)
         if df is None or df.empty:
             logger.warning(f"{code}: 가격 데이터 없음")
             return None

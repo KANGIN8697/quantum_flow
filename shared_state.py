@@ -2,6 +2,7 @@
 # threading.Lock을 사용하여 thread-safe 접근 보장
 
 import threading
+from datetime import datetime
 from config.settings import INITIAL_STOP_ATR, TRAILING_STOP_ATR
 
 shared_state = {
@@ -30,6 +31,38 @@ shared_state = {
 
     # 기능6: 섹터 멀티플라이어
     "sector_multipliers": {},     # {"반도체": 1.2, "내수": 0.8, ...}
+
+    # Agent 1 → 전체: 거시 리스크 상태
+    "macro_risk": "ON",              # ON / OFF / CAUTION
+    "macro_confidence": 50,          # 거시 분석 신뢰도 (0~100)
+    "macro_urgent": "NONE",          # 긴급 플래그: NONE / HIGH / CRITICAL
+    "force_exit": False,             # 긴급 전량 청산 시그널
+    "strategist_result": {},         # Agent 3 → 전체: 전략 실행 결과
+
+    # 에이전트 간 데이터 전달 키
+    "macro_result": {},           # Agent 1 → Agent 3: 거시 분석 결과
+    "macro_sectors": [],          # Agent 1 → Agent 2: 추천 섹터
+    "macro_avoid_sectors": [],    # Agent 1 → Agent 2: 회피 섹터
+    "preferred_sectors": [],      # Agent 2 내부: 선호 섹터
+    "scanner_result": {},         # Agent 2 → Agent 3: 스캔 결과
+    "vix_level": "NORMAL",        # Agent 4: VIX 레벨 (NORMAL/CAUTION/HIGH/EXTREME)
+    "vix_value": None,            # Agent 4: VIX 현재값
+    "vix_trail_adjustment": 1.0,  # Agent 4: 트레일링 스탑 조정 배수
+
+    # ========== 2트랙 전략 관련 (2026-02-25) ==========
+    # 15분봉 추세 정보 (Agent 4 → Agent 2,3)
+    "tf15_trends": {},            # {종목코드: {"trend":"UP","aligned":True,"ma3":..}}
+    "tf5_trends": {},             # {종목코드: {"trend":"UP","aligned":True,...}}
+
+    # Track 분류 (Agent 3 관리)
+    "track_info": {},             # {종목코드: {"track": 1 or 2, "entry_time": str,
+                                  #            "entry_price": float, "max_pnl_pct": float}}
+
+    # Track 2 오버나이트 후보 (14:30 평가)
+    "overnight_candidates": [],   # [{"code":str, "pnl_pct":float, "catalyst":str}, ...]
+
+    # 체결강도 실시간 (Agent 4 웹소켓 → Agent 3)
+    "realtime_chg_strength": {},  # {종목코드: float} — 최근 체결강도
 }
 
 _lock = threading.Lock()
@@ -130,3 +163,55 @@ def get_positions() -> dict:
     """현재 보유 포지션 전체 반환 (thread-safe)"""
     with _lock:
         return dict(shared_state["positions"])
+
+
+# ── 2트랙 전략 헬퍼 ─────────────────────────────────────────────
+
+def set_tf15_trend(code: str, trend_data: dict):
+    """15분봉 추세 정보 갱신 (Agent 4 → Agent 3)"""
+    with _lock:
+        shared_state["tf15_trends"][code] = trend_data
+
+
+def get_tf15_trend(code: str) -> dict:
+    """15분봉 추세 조회"""
+    with _lock:
+        return shared_state["tf15_trends"].get(code, {})
+
+
+def set_track_info(code: str, track: int, entry_price: float = 0,
+                   entry_time: str = ""):
+    """포지션 Track 분류 설정 (1=장중, 2=오버나이트)"""
+    with _lock:
+        shared_state["track_info"][code] = {
+            "track": track,
+            "entry_price": entry_price,
+            "entry_time": entry_time or datetime.now().strftime("%H:%M:%S"),
+            "max_pnl_pct": 0.0,
+        }
+
+
+def get_track_info(code: str) -> dict:
+    """포지션 Track 정보 조회"""
+    with _lock:
+        return shared_state["track_info"].get(code, {})
+
+
+def update_track_pnl(code: str, current_pnl_pct: float):
+    """Track 포지션 최대 수익률 갱신"""
+    with _lock:
+        info = shared_state["track_info"].get(code)
+        if info and current_pnl_pct > info.get("max_pnl_pct", 0):
+            info["max_pnl_pct"] = current_pnl_pct
+
+
+def set_chg_strength(code: str, value: float):
+    """실시간 체결강도 갱신 (Agent 4 웹소켓)"""
+    with _lock:
+        shared_state["realtime_chg_strength"][code] = value
+
+
+def get_chg_strength(code: str) -> float:
+    """실시간 체결강도 조회"""
+    with _lock:
+        return shared_state["realtime_chg_strength"].get(code, 0.0)

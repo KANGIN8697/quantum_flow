@@ -11,6 +11,16 @@ dist/
 build/
 .DS_Store
 
+# 백테스트 캐시 (대용량)
+backtest/cache/
+backtest/results/
+*.pkl
+
+# 분석 캐시 (재생성 가능)
+analysis/cache/
+analysis/results/
+*.parquet
+
 # 데이터 파이프라인
 database/*.db
 database/chroma/

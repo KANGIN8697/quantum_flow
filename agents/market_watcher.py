@@ -10,12 +10,13 @@ from dotenv import load_dotenv
 import logging
 from tools.utils import safe_float
 
-def safe_yf_download(ticker, period="5d", interval="1d", retries=3):
-    """yfinance download with retry logic"""
+def safe_yf_download(ticker, period="5d", interval="1d", retries=3, **kwargs):
+    """yfinance download with retry logic — yf.download 래퍼"""
+    import yfinance as _yf
     for attempt in range(retries):
         try:
-            data = safe_yf_download(ticker, period=period, interval=interval,
-                             progress=False, timeout=10)
+            data = _yf.download(ticker, period=period, interval=interval,
+                                progress=False, timeout=10, **kwargs)
             if data is not None and not data.empty:
                 return data
         except Exception as e:
@@ -43,10 +44,16 @@ try:
         NEWS_CHECK_INTERVAL,
         INITIAL_STOP_ATR, TRAILING_STOP_ATR,
         RECOVERY_MIN_WAIT, RECOVERY_MAX_REENTRY, RECOVERY_POSITION_RATIO,
+        STOCK_RAPID_CHANGE_PCT, STOCK_RAPID_ALERT_PCT,
+        TRACK1_FORCE_CLOSE, TRACK2_EVAL_TIME, TRACK2_DECISION_TIME,
     )
-    from shared_state import get_state, set_state, update_risk_params, get_positions
+    from shared_state import (
+        get_state, set_state, update_risk_params, get_positions,
+        set_tf15_trend, set_chg_strength, get_track_info,
+    )
     from tools.notifier_tools import notify_risk_off, notify_error
     from tools.news_tools import build_news_context
+    from tools.timeframe_tools import update_tf15, push_min1_bar, clear_buffers
 except ImportError:
     # 독립 실행 시 기본값
     VIX_SURGE_THRESHOLD    = 0.20
@@ -120,6 +127,7 @@ class MarketWatcher:
         self.check_interval = check_interval
         self._running = False
         self._thread: threading.Thread | None = None
+        self._ws_feeder = None  # KISWebSocketFeeder 참조
 
         # 이전 지표 저장 (변동률 계산용)
         self._prev: dict = {
@@ -127,6 +135,20 @@ class MarketWatcher:
             "kospi":  None,
             "usdkrw": None,
         }
+
+    def attach_ws_feeder(self, feeder):
+        """
+        웹소켓 피더를 연결하고 체결강도 콜백을 등록한다.
+        main.py 또는 watcher_task.py에서 호출.
+
+        사용법:
+            feeder = KISWebSocketFeeder(stock_codes)
+            watcher = MarketWatcher()
+            watcher.attach_ws_feeder(feeder)
+        """
+        self._ws_feeder = feeder
+        feeder.register_chg_callback(self._update_chg_strength_from_ws)
+        print(f"  🔗 [{MODE_LABEL}] 웹소켓 피더 ↔ MarketWatcher 체결강도 콜백 연결 완료")
 
     # ── 실행 / 중지 ──────────────────────────────────────────
 
@@ -164,8 +186,21 @@ class MarketWatcher:
 
     def check_cycle(self):
         """한 번의 감시 주기를 실행한다."""
-        now = datetime.now().strftime("%H:%M:%S")
-        print(f"\n  🔭 [{MODE_LABEL}] 시장 감시 주기 시작 ({now})")
+        now_str = datetime.now().strftime("%H:%M:%S")
+        now_hm = datetime.now().strftime("%H:%M")
+        print(f"\n  🔭 [{MODE_LABEL}] 시장 감시 주기 시작 ({now_str})")
+
+        # ── 장중 시간대: 15분봉/체결강도 실시간 갱신 (09:00~15:30) ──
+        if "09:00" <= now_hm <= "15:30":
+            self._update_timeframe_trends()
+
+        # ── 14:30 Track 2 오버나이트 전환 판정 ──
+        if now_hm == TRACK2_EVAL_TIME:
+            self._trigger_track2_evaluation()
+
+        # ── 15:10 Track 1 강제 청산 ──
+        if now_hm == TRACK1_FORCE_CLOSE:
+            self._trigger_track1_force_close()
 
         # [기능3] Risk-Off 상태에서 Recovery Watch 체크
         if get_state("risk_off"):
@@ -203,8 +238,11 @@ class MarketWatcher:
             print("  ℹ️  Risk-Off 상태 유지 중 — 추가 점검 스킵")
             return
 
-        # 정량 트리거 확인
-        triggered, trigger_details = self.check_quantitative_triggers()
+        # 정량 트리거 확인 (VIX 값도 함께 반환받아 중복 API 호출 방지)
+        triggered, trigger_details, vix_now = self.check_quantitative_triggers()
+
+        # ── [추가 리스크] VIX 레벨 기반 동적 파라미터 조정 ──
+        self._adjust_by_vix_level(vix_now=vix_now)
 
         if len(triggered) >= RISK_OFF_TRIGGER_MIN:
             print(f"  ⚠️  트리거 {len(triggered)}개 발동: {trigger_details}")
@@ -212,7 +250,7 @@ class MarketWatcher:
             time.sleep(RISK_OFF_CONFIRM_WAIT)
 
             # 유예 후 재확인 (일시적 노이즈 필터링)
-            triggered2, _ = self.check_quantitative_triggers()
+            triggered2, _, _ = self.check_quantitative_triggers()
             if len(triggered2) >= RISK_OFF_TRIGGER_MIN:
                 llm_confirm = self.check_llm_context(trigger_details)
                 if llm_confirm:
@@ -232,18 +270,20 @@ class MarketWatcher:
 
         Returns
         -------
-        (triggered: list, details: list[str])
+        (triggered: list, details: list[str], vix_now: float|None)
         """
         triggered = []
         details = []
+        vix_now = None  # VIX 현재값 (중복 API 호출 방지용)
 
         # ─ VIX 급등 ───────────────────────────────────────
         try:
             vix_data = yf.download(VIX_TICKER, period="5d", interval="1d",
-                                   progress=False, auto_adjust=True)
+                                   progress=False)
             if len(vix_data) >= 2:
                 vix_prev  = safe_float(vix_data["Close"].iloc[-2])
                 vix_today = safe_float(vix_data["Close"].iloc[-1])
+                vix_now = vix_today  # 저장하여 _adjust_by_vix_level에 전달
                 vix_chg   = (vix_today - vix_prev) / (vix_prev or 1)
 
                 if self._prev["vix"] is None:
@@ -260,7 +300,7 @@ class MarketWatcher:
         # ─ 코스피 급락 ────────────────────────────────────
         try:
             ks_data = yf.download(KOSPI_TICKER, period="5d", interval="1d",
-                                  progress=False, auto_adjust=True)
+                                  progress=False)
             if len(ks_data) >= 2:
                 ks_prev  = safe_float(ks_data["Close"].iloc[-2])
                 ks_today = safe_float(ks_data["Close"].iloc[-1])
@@ -277,7 +317,7 @@ class MarketWatcher:
         # ─ 달러/원 급변 ──────────────────────────────────
         try:
             fx_data = yf.download(USDKRW_TICKER, period="5d", interval="1d",
-                                  progress=False, auto_adjust=True)
+                                  progress=False)
             if len(fx_data) >= 2:
                 fx_prev  = safe_float(fx_data["Close"].iloc[-2])
                 fx_today = safe_float(fx_data["Close"].iloc[-1])
@@ -297,7 +337,7 @@ class MarketWatcher:
             for ticker in TOP10_TICKERS[:5]:   # API 부하 감소를 위해 5개만
                 try:
                     d = safe_yf_download(ticker, period="5d", interval="1d",
-                                    progress=False, auto_adjust=True)
+                                    progress=False)
                     if len(d) >= 2:
                         chg = (safe_float(d["Close"].iloc[-1]) - safe_float(d["Close"].iloc[-2])) / safe_float(d["Close"].iloc[-2])
                         if chg < 0:
@@ -317,7 +357,146 @@ class MarketWatcher:
         except Exception as e:
             print(f"    ⚠️  시총 상위 조회 실패: {e}")
 
-        return triggered, details
+        return triggered, details, vix_now
+
+    # ── 2.5 다중 타임프레임 갱신 + Track 관리 ─────────────────
+
+    def _update_timeframe_trends(self):
+        """
+        감시 종목 + 보유 종목에 대해 15분봉 추세를 갱신한다.
+        매 check_cycle()마다 호출 (장중 09:00~15:30).
+        갱신된 추세 정보는 shared_state에 저장되어 Agent 3이 참조.
+        """
+        # 갱신 대상: 보유 종목 + 감시 리스트
+        positions = get_positions()
+        watch_list = get_state("watch_list") or []
+
+        # 중복 제거하여 타겟 코드 수집
+        target_codes = set(positions.keys())
+        for item in watch_list:
+            if isinstance(item, dict):
+                target_codes.add(item.get("code", ""))
+            elif isinstance(item, str):
+                target_codes.add(item)
+        target_codes.discard("")
+
+        if not target_codes:
+            return
+
+        updated = 0
+        for code in target_codes:
+            try:
+                # 15분봉 추세 갱신 (1분봉 버퍼 기반 리샘플링)
+                trend_data = update_tf15(code)
+                set_tf15_trend(code, trend_data)
+                updated += 1
+            except Exception as e:
+                logger.debug(f"_update_timeframe_trends({code}): {e}")
+
+        if updated > 0:
+            logger.info(f"15분봉 추세 갱신: {updated}종목")
+
+    def _update_chg_strength_from_ws(self, code: str, strength: float):
+        """
+        웹소켓 피더에서 체결강도를 수신받아 shared_state에 저장.
+        websocket_feeder.py의 콜백으로 등록하여 사용.
+
+        Parameters:
+            code:     종목코드 (예: "005930")
+            strength: 체결강도 (누적매수/누적매도 비율)
+        """
+        set_chg_strength(code, strength)
+
+    def _trigger_track2_evaluation(self):
+        """
+        14:30 Track 2 오버나이트 전환 판정.
+        HeadStrategist.evaluate_track2_transition()을 호출하여
+        보유 종목의 오버나이트 보유 여부를 결정한다.
+        """
+        print(f"\n  🌙 [{MODE_LABEL}] 14:30 Track 2 오버나이트 판정 트리거")
+        try:
+            from agents.head_strategist import HeadStrategist
+            strategist = HeadStrategist()
+            decisions = strategist.evaluate_track2_transition()
+
+            # 텔레그램 알림
+            hold_count = sum(1 for d in decisions if d["action"] == "HOLD_OVERNIGHT")
+            close_count = sum(1 for d in decisions if d["action"] == "CLOSE")
+            if decisions:
+                try:
+                    from tools.notifier_tools import _send
+                    msg = (f"🌙 <b>Track 2 오버나이트 판정</b>\n"
+                           f"보유: {hold_count}건 | 청산: {close_count}건")
+                    for d in decisions:
+                        action_emoji = "🌙" if d["action"] == "HOLD_OVERNIGHT" else "💰"
+                        msg += f"\n  {action_emoji} {d['code']}: {d['reason'][:40]}"
+                    _send(msg)
+                except Exception:
+                    pass
+
+        except ImportError:
+            print("  ⚠️  HeadStrategist import 실패 — Track 2 판정 스킵")
+        except Exception as e:
+            print(f"  ❌ Track 2 판정 오류: {e}")
+            try:
+                notify_error("MarketWatcher.Track2Eval", str(e), MODE_LABEL)
+            except Exception:
+                pass
+
+    def _trigger_track1_force_close(self):
+        """
+        15:10 Track 1 장중 포지션 강제 청산.
+        HeadStrategist.get_track1_close_list()로 청산 대상을 받아
+        주문 실행기에 전달한다.
+        """
+        print(f"\n  🔒 [{MODE_LABEL}] 15:10 Track 1 강제 청산 트리거")
+        try:
+            from agents.head_strategist import HeadStrategist
+            from shared_state import remove_position, add_to_blacklist
+
+            strategist = HeadStrategist()
+            close_codes = strategist.get_track1_close_list()
+
+            if not close_codes:
+                print("  ✅ Track 1 청산 대상 없음 (전부 Track 2 또는 빈 포지션)")
+                return
+
+            print(f"  🔒 Track 1 강제 청산 대상: {close_codes}")
+            for code in close_codes:
+                try:
+                    # 시장가 청산 주문 (dry_run 포함)
+                    from tools.order_tools import place_market_sell
+                    pos = get_positions().get(code, {})
+                    qty = pos.get("quantity", 0)
+                    if qty > 0:
+                        place_market_sell(code, qty, reason="Track1 15:10 강제청산")
+                    remove_position(code)
+                    add_to_blacklist(code)
+                    print(f"    ✅ {code}: 청산 완료 (수량 {qty})")
+                except ImportError:
+                    print(f"    ⚠️ {code}: order_tools 미구현 — 로그만 기록")
+                    remove_position(code)
+                except Exception as e:
+                    print(f"    ❌ {code}: 청산 실패 — {e}")
+
+            # 텔레그램 알림
+            try:
+                from tools.notifier_tools import _send
+                msg = (f"🔒 <b>Track 1 강제청산 ({TRACK1_FORCE_CLOSE})</b>\n"
+                       f"대상: {len(close_codes)}건\n"
+                       f"종목: {', '.join(close_codes)}")
+                _send(msg)
+            except Exception:
+                pass
+
+        except ImportError as e:
+            print(f"  ⚠️  import 실패: {e}")
+        except Exception as e:
+            print(f"  ❌ Track 1 강제 청산 오류: {e}")
+            try:
+                notify_error("MarketWatcher.Track1Close", str(e), MODE_LABEL)
+            except Exception:
+                pass
 
     # ── 3. LLM 이중 검증 ────────────────────────────────────
 
@@ -429,8 +608,11 @@ class MarketWatcher:
 
             print("  🔄 장중 경량 거시 재분석 시작...")
             loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(run_intraday_reanalysis(reason))
-            loop.close()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(run_intraday_reanalysis(reason))
+            finally:
+                loop.close()
 
             if result:
                 new_strategy = result.get("strategy", "?")
@@ -462,8 +644,11 @@ class MarketWatcher:
 
             print("  🔍 장중 긴급 재스캔 시작...")
             loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(run_emergency_rescan(reason))
-            loop.close()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(run_emergency_rescan(reason))
+            finally:
+                loop.close()
 
             updated = result.get("updated_count", 0)
             print(f"  ✅ 재스캔 완료: {updated}종목 감시 리스트 갱신")
@@ -536,7 +721,7 @@ YES 또는 NO로만 답하세요."""
             try:
                 ticker = f"{code}.KS"
                 d = yf.download(ticker, period="1d", interval="5m",
-                               progress=False, auto_adjust=True)
+                               progress=False)
                 if d is None or len(d) < 2:
                     continue
 
@@ -554,7 +739,77 @@ YES 또는 NO로만 답하세요."""
             except Exception as e:
                 logger.debug(f"_check_position_alerts {code}: {e}")
 
-    # ── 4. Risk-Off 선언 ────────────────────────────────────
+    # ── 3.6 [추가 리스크] VIX 레벨별 동적 조정 ────────────
+    
+    def _adjust_by_vix_level(self, vix_now=None):
+        """
+        VIX 절대 레벨에 따라 리스크 파라미터를 동적으로 조정.
+        백테스트 분석 결과 매크로 상관계수가 낮으므로(r=0.058),
+        하드 필터 대신 트레일링 스탑 완화/강화로 사용.
+
+        Parameters
+        ----------
+        vix_now : float or None
+            check_quantitative_triggers()에서 이미 조회한 VIX 값.
+            None이면 별도 조회 (중복 호출 방지를 위해 가급적 전달).
+        """
+        try:
+            from config.settings import (
+                VIX_NORMAL_MAX, VIX_CAUTION_MAX, VIX_HIGH_MAX,
+                VIX_TRAIL_ADJUSTMENT,
+            )
+        except ImportError:
+            return  # 설정 미정의 시 스킵
+
+        # vix_now가 전달되지 않은 경우에만 별도 조회 (폴백)
+        if vix_now is None:
+            if not yf:
+                return
+            try:
+                vix_data = yf.download(VIX_TICKER, period="2d", interval="1d",
+                                       progress=False)
+                if vix_data is None or len(vix_data) < 1:
+                    return
+                vix_now = float(vix_data["Close"].iloc[-1])
+            except Exception:
+                return
+
+        try:
+
+            if vix_now <= VIX_NORMAL_MAX:
+                vix_level = "NORMAL"
+            elif vix_now <= VIX_CAUTION_MAX:
+                vix_level = "CAUTION"
+            elif vix_now <= VIX_HIGH_MAX:
+                vix_level = "HIGH"
+            else:
+                vix_level = "EXTREME"
+
+            adjustment = VIX_TRAIL_ADJUSTMENT.get(vix_level, 1.0)
+
+            # shared_state에 VIX 레벨 저장 (다른 에이전트 참조용)
+            set_state("vix_level", vix_level)
+            set_state("vix_value", round(vix_now, 2))
+            set_state("vix_trail_adjustment", adjustment)
+
+            if vix_level != "NORMAL":
+                print(f"  📊 [VIX] {vix_now:.1f} ({vix_level}) → 트레일링 조정 x{adjustment}")
+
+                if vix_level == "EXTREME":
+                    # VIX 30+ → 신규 진입 사실상 차단
+                    update_risk_params({
+                        "risk_level": "HIGH",
+                        "pyramiding_allowed": False,
+                    })
+                elif vix_level == "HIGH":
+                    update_risk_params({
+                        "pyramiding_allowed": False,
+                    })
+
+        except Exception as e:
+            logger.debug(f"_adjust_by_vix_level: {e}")
+
+        # ── 4. Risk-Off 선언 ────────────────────────────────────
 
     def declare_risk_off(self, triggered: list, details: list):
         """
@@ -609,7 +864,7 @@ YES 또는 NO로만 답하세요."""
         """
         print("  🔍 Recovery Watch: 정량 트리거 해소 확인 중...")
 
-        triggered, _ = self.check_quantitative_triggers()
+        triggered, _, _ = self.check_quantitative_triggers()
 
         if len(triggered) >= RISK_OFF_TRIGGER_MIN:
             print(f"  ⚠️  트리거 {len(triggered)}개 유지 — Recovery 불가")
@@ -738,7 +993,7 @@ if __name__ == "__main__":
     print("    (yfinance로 실시간 데이터 조회 — 인터넷 필요)")
 
     try:
-        triggered, details = watcher.check_quantitative_triggers()
+        triggered, details, _ = watcher.check_quantitative_triggers()
         print(f"\n  발동 트리거: {len(triggered)}개 / 기준 {RISK_OFF_TRIGGER_MIN}개")
         for d in details:
             print(f"    • {d}")
@@ -762,7 +1017,3 @@ if __name__ == "__main__":
     print("  ✅ MarketWatcher 테스트 완료!")
     print("=" * 60)
 
-# Wrapper for main.py compatibility
-async def market_watcher_run():
-    watcher = MarketWatcher()
-    return watcher.run()

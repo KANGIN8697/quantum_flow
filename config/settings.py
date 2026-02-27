@@ -3,7 +3,7 @@
 
 # 매수 신호 필터 기준값
 DONCHIAN_PERIOD = 20          # 돈치안 채널 기간
-VOLUME_SURGE_RATIO = 2.0      # 전일 동시간대 대비 거래량 배율
+VOLUME_SURGE_RATIO = 1.5      # 전일 동시간대 대비 거래량 배율 (백테스트: 1.5x > 2.0x)
 TICK_SPEED_MIN = 5            # 초당 최소 체결 건수
 RSI_LOWER = 50                # RSI 하한
 RSI_UPPER = 70                # RSI 상한
@@ -23,10 +23,10 @@ PYRAMID_TICK_RATIO = 0.40     # 초기 진입 틱 속도의 40%
 PYRAMID_VOLUME_TREND_MIN = 5  # 거래량 추세 확인 분 단위
 PYRAMID_MAX_COUNT = 2         # 최대 피라미딩 횟수
 
-# 손�H / 트레일링
+# 손절 / 트레일링
 ATR_PERIOD = 14
-INITIAL_STOP_ATR = 2.0        # 초기 손절: -2 x ATR (Day 1)
-TRAILING_STOP_ATR = 3.0       # 트레일링: -3 x ATR
+INITIAL_STOP_ATR = 2.5        # 초기 손절: -2.5 x ATR (백테스트 최적: 2.5ATR)
+TRAILING_STOP_ATR = 4.0       # 트레일링: -4 x ATR (백테스트 최적: 4ATR > 3ATR)
 PYRAMID_STOP_PCT = -0.03      # 추가매수 후 손절: 평단 -3%
 # 타임 디케이 ATR 배수 (일차별)
 TIME_DECAY_ATR = {
@@ -59,7 +59,7 @@ OVERNIGHT_NEWS_NEGATIVE = [
 ]
 
 # 시간 설정 (KST)
-MARKET_OPEN_HOLD = "09:10"    # 매수 싨호 활성화 시각
+MARKET_OPEN_HOLD = "09:20"    # 매수 신호 활성화 시각 (백테스트: 09:10~09:20 오프닝 러시 제외)
 FORCE_CLOSE_TIME = "15:20"    # 강제 청산 시각
 NO_PYRAMID_AFTER = "15:00"    # 추가매수 금지 시각
 SCANNER_RUN_1 = "08:30"       # Agent 2 1차 실행
@@ -75,7 +75,7 @@ RISK_OFF_CONFIRM_WAIT = 60    # Risk-Off 선언 전 유예 시간 (초)
 
 # 기술적 지표 (ADX, VWAP)
 ADX_PERIOD = 14               # ADX 계산 기간
-ADX_THRESHOLD = 25            # ADX 진입 최소값 (추세 확인)
+ADX_THRESHOLD = 0             # ADX 진입 최소값 (백테스트: ADX 필터 역효과 확인 → 비활성화)
 VWAP_LOOKBACK = 20            # VWAP 계산 기간 (일봉 기준)
 DONCHIAN_PROXIMITY_PCT = 0.97 # 돈치안 상단 근접 판정 비율 (97%)
 
@@ -115,3 +115,109 @@ TWAP_INTERVAL_SEC = 30  # TWAP interval sec
 TWAP_MAX_SPLITS = 5  # TWAP max splits
 TWAP_TICK_SPEED_MIN = 3  # TWAP min tick speed
 TWAP_VOLUME_THRESHOLD = 500000  # TWAP volume threshold
+
+# 장중 개별종목 급변 감지 기준
+STOCK_RAPID_CHANGE_PCT = 0.03     # 5분내 ±3% 변동 주의
+STOCK_RAPID_ALERT_PCT  = 0.05     # 5분내 ±5% 변동 경고
+VOLUME_SPIKE_CAUTION   = 3.0      # 거래량 3배 이상 주의
+VOLUME_SPIKE_ALERT     = 5.0      # 거래량 5배 이상 경고
+
+# 장중 감시 부가 기준 (Agent 4 확장용)
+VIX_CAUTION_THRESHOLD    = 0.10   # VIX +10% 주의
+KOSPI_CAUTION_THRESHOLD  = -0.01  # 코스피 -1% 주의
+FX_CAUTION_THRESHOLD     = 10     # 달러/원 ±10원 주의
+SP500_CAUTION_THRESHOLD  = -0.01  # S&P500 -1% 주의
+SP500_ALERT_THRESHOLD    = -0.025 # S&P500 -2.5% 경고
+
+# ========== 매크로 필터 상수 (백테스트 결과 기반) ==========
+# [필터1] Neutral 레짐 → 신규 매수 차단 (신뢰도: 높음, 4개 기간 일관)
+NEUTRAL_REGIME_BLOCK = True       # Neutral 레짐 시 매수 차단 활성화
+
+# [필터2] 달러 강세 → 포지션 축소 (소프트 필터, N=65 소표본)
+USD_STRENGTH_THRESHOLD = 0.5      # USD/KRW 일간 변화율(%) 기준
+USD_STRENGTH_POSITION_MULT = 0.7  # 달러 강세 시 포지션 축소 비율 (30% 감소)
+
+# [필터3] KOSPI 5일 모멘텀 → 확신도 가산 (소프트 필터, p=0.03 경계선)
+KOSPI_MOMENTUM_THRESHOLD = 2.0    # KOSPI 5일 변화율(%) 기준
+KOSPI_MOMENTUM_POSITION_MULT = 1.1  # 모멘텀 확인 시 포지션 가산 (10%)
+
+# ========== 추가 리스크 요소 (향후 통합 대상) ==========
+# VIX 레벨별 동적 트레일링 스탑
+VIX_NORMAL_MAX = 20               # VIX ≤ 20: 정상
+VIX_CAUTION_MAX = 25              # VIX 20~25: 주의
+VIX_HIGH_MAX = 30                 # VIX 25~30: 높음
+# VIX > 30: 극단적 (Risk-OFF 고려)
+
+# VIX 레벨에 따른 트레일링 스탑 조정 배수
+VIX_TRAIL_ADJUSTMENT = {
+    "NORMAL": 1.0,    # VIX ≤ 20: 기본 트레일링
+    "CAUTION": 1.3,   # VIX 20~25: 트레일링 30% 완화 (조기청산 방지)
+    "HIGH": 1.5,      # VIX 25~30: 트레일링 50% 완화
+    "EXTREME": 0.0,   # VIX > 30: 신규 진입 금지 (기존 Risk-OFF와 연동)
+}
+
+# 외국인 수급 필터 (향후 데이터 수집 후 활성화)
+FOREIGN_CUMUL_DAYS = 5            # 외국인 순매수/순매도 누적 일수
+FOREIGN_SELL_THRESHOLD = -500     # 5일 순매도 억원 기준 (초과 시 주의)
+FOREIGN_SELL_POSITION_MULT = 0.8  # 외국인 순매도 시 포지션 20% 축소
+
+# ========== 백테스트 결과 기반 최적화 상수 (2026-02-25) ==========
+# 분석: 299종목 × 663 파라미터 조합, 2024-02-01~2026-02-25
+# 체결강도(CHG) 신호 최적 기준값
+CHG_STRENGTH_THRESHOLD = 0.70     # 체결강도 진입 기준 (백테스트 최적: 0.70, 기존 0.55대비 수익+0.03%)
+CHG_STRENGTH_MA5_MIN   = 0.55     # 체결강도 5분MA 최소값 (추세 확인용)
+
+# 장중 익절(Take Profit) — DC 진입 후 당일 목표 수익률
+INTRADAY_TP_PCT = 0.05            # 장중 익절 5% (백테스트 최적: 5% > 7% > 10%)
+INTRADAY_TP_ENABLED = True        # 장중 익절 활성화
+
+# 오프닝 구간 포지션 제한
+OPENING_RUSH_END = "09:20"        # 오프닝 러시 종료 시각 (09:10~09:20 진입 자제)
+OPENING_RUSH_POS_MULT = 0.0       # 오프닝 구간 진입 금지 (0.0 = 차단)
+
+# 시간대별 포지션 가중치 (백테스트 기반)
+# 10:00~10:30 구간이 승률 최고(34.8%), 오전장 집중
+INTRADAY_TIME_WEIGHT = {
+    "09:20": 0.5,   # 09:20~09:30: 관망 (직후 오프닝 러시)
+    "09:30": 0.8,   # 09:30~10:00: 준비
+    "10:00": 1.0,   # 10:00~10:30: 주요 매수 구간 (승률 34.8%)
+    "10:30": 0.9,   # 10:30~11:00
+    "11:00": 0.7,   # 11:00~11:30: 승률 저하
+    "11:30": 0.6,   # 11:30~13:00: 점심 구간 (승률 최저)
+    "13:00": 0.7,   # 13:00 이후
+}
+
+# ========== 2트랙 전략 파라미터 (2026-02-25) ==========
+# 다중 타임프레임 MA 설정
+TF15_MA_SHORT  = 3       # 15분봉 단기 MA
+TF15_MA_MID    = 8       # 15분봉 중기 MA
+TF15_MA_LONG   = 20      # 15분봉 장기 MA (전일 데이터 포함)
+TF5_MA_SHORT   = 3       # 5분봉 단기 MA
+TF5_MA_MID     = 8       # 5분봉 중기 MA
+
+# Track 1 (장중 트레이딩) 청산 규칙
+TRACK1_INITIAL_STOP_ATR = 1.5    # Track 1 초기 손절 (타이트)
+TRACK1_TRAIL_ATR        = 4.0    # Track 1 트레일링 (여유)
+TRACK1_TP_PCT           = 0.05   # Track 1 분할 익절 5% (50% 분할)
+TRACK1_TP_SPLIT_RATIO   = 0.50   # 분할 청산 비율 (50%)
+TRACK1_TIME_EXIT_BARS   = 30     # 시간 TP: 30봉 후 +1% 미만 → 청산
+TRACK1_TIME_EXIT_MIN_PNL = 0.01  # 시간 TP 최소 수익률 (1%)
+TRACK1_FORCE_CLOSE      = "15:10"  # Track 1 강제 청산 시각
+
+# Track 2 (오버나이트 스윙) 전환 조건
+TRACK2_QUALIFY_PNL      = 0.03   # 오버나이트 자격 수익률 (+3%↑)
+TRACK2_EVAL_TIME        = "14:30"  # Track 2 전환 판정 시각
+TRACK2_CHG_MIN          = 0.60   # 전환 시 체결강도 최소값
+TRACK2_MAX_POSITIONS    = 2      # 최대 오버나이트 종목 수
+TRACK2_DECISION_TIME    = "14:45"  # 최종 보유/청산 결정 시각
+
+# Track 2 익일 청산 규칙
+TRACK2_NEXT_TRAIL_PCT   = -0.05  # 익일 트레일링 -5%
+TRACK2_GAP_DOWN_CUT     = -0.01  # 갭다운 -1% 즉시 청산
+TRACK2_NEXT_DEADLINE    = "14:00"  # 익일 최종 청산 시각
+TRACK2_MAX_HOLD_DAYS    = 1      # 최대 보유 일수
+
+# 자금 배분
+TRACK1_ALLOC            = 0.80   # Track 1 자금 배분 80%
+TRACK2_RESERVE          = 0.20   # Track 2 예비 자금 20%
+CASH_BUFFER_MIN         = 0.10   # 최소 현금 버퍼 10%

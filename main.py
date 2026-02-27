@@ -35,6 +35,9 @@ from tools.market_calendar import is_market_open_day, market_time_label, KST
 from shared_state import get_state, set_state, get_positions, remove_position
 from datetime import datetime
 
+USE_PAPER = os.getenv("USE_PAPER", "true").lower() == "true"
+MODE = "모의투자" if USE_PAPER else "실전투자"
+
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
