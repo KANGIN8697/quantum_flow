@@ -59,7 +59,7 @@ FRED_SERIES_TREND = {
 
 FRED_SERIES = {**FRED_SERIES_DAILY, **FRED_SERIES_TREND}
 
-# 긴급 뉴스 키워드 (가중치 포함)
+# 긴급 뉴스 키워드 — 한글 (가중치 포함)
 URGENT_KEYWORDS = {
     "서킷브레이커": 10, "사이드카": 8,
     "전쟁": 9, "미사일": 8, "폭격": 9,
@@ -70,6 +70,24 @@ URGENT_KEYWORDS = {
     "리세션": 6, "경기침체": 6,
     "뱅크런": 8, "유동성위기": 7,
     "블랙먼데이": 9, "블랙스완": 8,
+    # 추가 한글 키워드 (2026-03-01)
+    "공격": 7, "전투": 7, "포격": 8,
+    "제재": 6, "봉쇄": 6, "핵": 9,
+    "침공": 9, "공습": 8, "선전포고": 10,
+    "무력충돌": 8,
+}
+
+# 긴급 뉴스 키워드 — 영문 (Reuters 등 글로벌 소스용)
+URGENT_KEYWORDS_EN = {
+    "war": 9, "attack": 8, "missile": 8, "bombing": 8,
+    "default": 8, "bankruptcy": 7, "recession": 6,
+    "rate hike": 5, "emergency": 5, "circuit breaker": 10,
+    "panic": 7, "crash": 8, "collapse": 7,
+    "sanctions": 7, "trade war": 8,
+    "invasion": 9, "airstrike": 8, "nuclear": 9,
+    "bank run": 8, "liquidity crisis": 7,
+    "black monday": 9, "black swan": 8,
+    "declaration of war": 10, "martial law": 9,
 }
 
 _cache = {}
@@ -282,10 +300,16 @@ def check_urgent_news(news_list: list = None) -> dict:
         title = article.get("title", "")
         desc = article.get("description", "")
         text = f"{title} {desc}"
-        
+        text_lower = text.lower()  # 영문 키워드 매칭용
+
         matched = {}
+        # 한글 키워드 매칭
         for keyword, weight in URGENT_KEYWORDS.items():
             if keyword in text:
+                matched[keyword] = weight
+        # 영문 키워드 매칭
+        for keyword, weight in URGENT_KEYWORDS_EN.items():
+            if keyword in text_lower:
                 matched[keyword] = weight
         
         if matched:

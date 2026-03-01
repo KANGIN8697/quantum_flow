@@ -63,6 +63,15 @@ shared_state = {
 
     # 체결강도 실시간 (Agent 4 웹소켓 → Agent 3)
     "realtime_chg_strength": {},  # {종목코드: float} — 최근 체결강도
+
+    # ========== 24시간 롤링 뉴스 모니터링 (2026-03-01) ==========
+    "news_current_urgency": "NONE",      # 현재 긴급도: NONE/LOW/MEDIUM/HIGH/CRITICAL
+    "news_urgency_changed": False,        # 직전 대비 긴급도 변화 여부
+    "news_trend_windows": {},             # {"1h": {...}, "3h": {...}, "6h": {...}, ...}
+    "news_trend_narrative": "",           # "전쟁 언급 6시간 전 2건→현재 8건 증가"
+    "news_urgent_items": [],              # 상위 5개 긴급 기사
+    "news_last_scan_time": None,          # 마지막 스캔 시각 (ISO 문자열)
+    "news_total_articles_24h": 0,         # 24시간 버퍼 내 총 기사 수
 }
 
 _lock = threading.Lock()
@@ -246,3 +255,32 @@ def get_chg_strength(code: str) -> float:
     """실시간 체결강도 조회"""
     with _lock:
         return shared_state["realtime_chg_strength"].get(code, 0.0)
+
+
+# ── 24시간 롤링 뉴스 모니터링 헬퍼 ──────────────────────────────
+
+def update_news_state(urgency: str, changed: bool, trend_windows: dict,
+                      narrative: str, urgent_items: list,
+                      total_articles: int):
+    """뉴스 모니터링 상태를 일괄 업데이트 (thread-safe)"""
+    with _lock:
+        shared_state["news_current_urgency"] = urgency
+        shared_state["news_urgency_changed"] = changed
+        shared_state["news_trend_windows"] = trend_windows
+        shared_state["news_trend_narrative"] = narrative
+        shared_state["news_urgent_items"] = urgent_items
+        shared_state["news_last_scan_time"] = datetime.now().isoformat()
+        shared_state["news_total_articles_24h"] = total_articles
+
+
+def get_news_summary() -> dict:
+    """현재 뉴스 모니터링 상태 요약 반환 (thread-safe)"""
+    with _lock:
+        return {
+            "urgency": shared_state["news_current_urgency"],
+            "changed": shared_state["news_urgency_changed"],
+            "trend_narrative": shared_state["news_trend_narrative"],
+            "urgent_items": list(shared_state["news_urgent_items"]),
+            "last_scan": shared_state["news_last_scan_time"],
+            "total_articles_24h": shared_state["news_total_articles_24h"],
+        }

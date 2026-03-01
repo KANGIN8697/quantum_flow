@@ -4,6 +4,7 @@
 #   python main.py --once    → 1회 실행 모드 (순차 실행 후 종료)
 #
 # 스케줄러 시간표 (KST):
+#   매시간  24시간 롤링 뉴스 스캔 (연합/Reuters/Google/네이버)
 #   05:50  토큰 갱신
 #   08:30  Agent 1: 거시경제 분석
 #   08:50  Agent 2: 종목 스캔 (1차)
@@ -476,6 +477,77 @@ async def job_weekly_report():
 #  스케줄러 모드 (기본)
 # ══════════════════════════════════════════════════════════════
 
+async def job_hourly_news_scan():
+    """
+    시간별 뉴스 스캔 (매시간 00분, 24시간 운영).
+    4개 소스(연합/Reuters/Google/네이버)에서 뉴스를 수집하여
+    24시간 롤링 버퍼에 축적하고 트렌드를 분석한다.
+    긴급도 변화 시에만 텔레그램 알림 + LLM 재분석 트리거.
+    """
+    try:
+        from tools.macro_news_monitor import run_hourly_news_scan
+        from shared_state import update_news_state
+
+        # 뉴스 수집 + 분석
+        result = run_hourly_news_scan()
+
+        # shared_state 업데이트
+        update_news_state(
+            urgency=result["urgency"],
+            changed=result["urgency_changed"],
+            trend_windows=result.get("trend_windows", {}),
+            narrative=result["trend_narrative"],
+            urgent_items=result.get("urgent_items", []),
+            total_articles=result["total_in_buffer"],
+        )
+
+        now_str = datetime.now(KST).strftime("%H:%M")
+        logger.info(
+            f"[뉴스스캔 {now_str}] 신규 {result['total_new']}건 / "
+            f"총 {result['total_in_buffer']}건 / 긴급도 {result['urgency']}"
+        )
+
+        # ── 긴급도 변화 시 텔레그램 알림 ──
+        if result["urgency_changed"] and result["urgency"] != "NONE":
+            try:
+                from tools.notifier_tools import send_telegram
+                urgent_text = (
+                    f"⚠️ 뉴스 긴급도 변화: {result['urgency']}\n"
+                    f"트렌드: {result['trend_narrative']}\n"
+                )
+                if result.get("urgent_items"):
+                    urgent_text += "주요 기사:\n"
+                    for item in result["urgent_items"][:3]:
+                        urgent_text += f"  • [{item['score']}점] {item['title'][:50]}\n"
+                send_telegram(urgent_text)
+            except Exception as ntf_err:
+                logger.warning(f"뉴스 알림 전송 실패: {ntf_err}")
+
+        # ── HIGH/CRITICAL 급상승 시 장중 재분석 트리거 ──
+        if (result["urgency_changed"]
+                and result["urgency"] in ("HIGH", "CRITICAL")
+                and is_market_open_day()):
+            # 장중 시간(09:00~15:20)에만 재분석 트리거
+            now = datetime.now(KST)
+            if 9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 20):
+                try:
+                    from agents.macro_analyst import run_intraday_reanalysis
+                    logger.info(f"⚡ 긴급도 {result['urgency']} — 장중 재분석 트리거")
+                    await run_intraday_reanalysis()
+                except ImportError:
+                    logger.warning("run_intraday_reanalysis 임포트 불가 — 재분석 스킵")
+                except Exception as e:
+                    logger.error(f"장중 재분석 실패: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"시간별 뉴스 스캔 실패: {e}", exc_info=True)
+        try:
+            from tools.notifier_tools import notify_error
+            notify_error("hourly_news_scan", str(e))
+        except Exception:
+            pass
+
+
 async def job_fred_release_setup():
     """06:00 — 오늘 FRED 발표 일정 조회 후 동적 Job 등록"""
     if not is_market_open_day():
@@ -522,6 +594,15 @@ async def run_scheduler():
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
     _scheduler_ref = scheduler  # fred_release_setup에서 동적 Job 등록용
+
+    # ── 24시간 뉴스 모니터링 (매시간 00분) ────────────────────
+    for hour in range(24):
+        scheduler.add_job(
+            job_hourly_news_scan,
+            CronTrigger(hour=hour, minute=0),
+            id=f"news_scan_{hour:02d}",
+            name=f"뉴스스캔 {hour:02d}:00",
+        )
 
     # ── 일일 스케줄 ──────────────────────────────────────────
     # 토큰 갱신
