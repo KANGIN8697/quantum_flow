@@ -50,7 +50,9 @@ try:
     from shared_state import (
         get_state, set_state, update_risk_params, get_positions,
         set_tf15_trend, set_chg_strength, get_track_info,
+        update_position_stop, remove_position, add_to_blacklist,
     )
+    from config.settings import TRAILING_STOP_PCT, TAKE_PROFIT_PCT, TIME_STOP_DAYS
     from tools.notifier_tools import notify_risk_off, notify_error
     from tools.news_tools import build_news_context
     from tools.timeframe_tools import update_tf15, push_min1_bar, clear_buffers
@@ -63,8 +65,8 @@ except ImportError:
     RISK_OFF_TRIGGER_MIN   = 2
     RISK_OFF_CONFIRM_WAIT  = 60
     NEWS_CHECK_INTERVAL    = 20
-    INITIAL_STOP_ATR       = 2.0
-    TRAILING_STOP_ATR      = 3.0
+    INITIAL_STOP_ATR       = 2.0   # v2 확정
+    TRAILING_STOP_ATR      = 4.0   # v2 확정
     RECOVERY_MIN_WAIT      = 1800
     RECOVERY_MAX_REENTRY   = 1
     RECOVERY_POSITION_RATIO = 0.6
@@ -238,6 +240,11 @@ class MarketWatcher:
             print("  ℹ️  Risk-Off 상태 유지 중 — 추가 점검 스킵")
             return
 
+        # ── 보유 포지션 청산 조건 체크 (매 주기 실행) ──────────────
+        # 백테스트와 동일: 트레일링 -2% / 익절 +7% / 타임스탑 3일
+        if "09:00" <= now_hm <= "15:25":
+            self._check_position_alerts()
+
         # 정량 트리거 확인 (VIX 값도 함께 반환받아 중복 API 호출 방지)
         triggered, trigger_details, vix_now = self.check_quantitative_triggers()
 
@@ -395,6 +402,35 @@ class MarketWatcher:
 
         if updated > 0:
             logger.info(f"15분봉 추세 갱신: {updated}종목")
+
+    def check_news_trigger(self, code: str, stock_name: str, reason: str, price: float):
+        """
+        종목 이상 감지 시 뉴스 모니터 트리거.
+        돈치안 돌파 / 거래량 급증 / 급등 감지 시 호출.
+        주문 실행관(Agent 4) 내부 or head_strategist에서 직접 호출 가능.
+
+        Parameters
+        ----------
+        code       : 종목코드
+        stock_name : 종목명
+        reason     : 트리거 사유 (예: "돈치안 돌파+거래량300%")
+        price      : 트리거 시점 현재가
+        """
+        try:
+            from tools.news_monitor import get_news_monitor
+            monitor = get_news_monitor()
+            monitor.trigger(code, stock_name, reason, price)
+            logger.info(f"  📰 뉴스 모니터 트리거: {stock_name}({code}) — {reason}")
+        except Exception as e:
+            logger.debug(f"뉴스 모니터 트리거 실패 ({code}): {e}")
+
+    def remove_news_monitoring(self, code: str):
+        """종목 청산 시 뉴스 모니터링 해제"""
+        try:
+            from tools.news_monitor import get_news_monitor
+            get_news_monitor().remove(code)
+        except Exception as e:
+            logger.debug(f"뉴스 모니터 해제 실패 ({code}): {e}")
 
     def _update_chg_strength_from_ws(self, code: str, strength: float):
         """
@@ -711,7 +747,14 @@ YES 또는 NO로만 답하세요."""
 
     def _check_position_alerts(self):
         """
-        보유 종목의 급변 감지 (가격 급등락, 거래량 폭증).
+        보유 종목 실시간 청산 조건 체크 + 급변 감지.
+
+        백테스트와 동일한 3가지 청산 조건 (v2):
+          1) 트레일링 스탑: 고점 대비 -2%
+          2) 익절:          진입가 대비 +7% 전량 청산
+          3) 타임스탑:      보유 3일 초과 → 강제 청산
+
+        급변 감지는 청산 조건 이후에 별도 처리.
         """
         positions = get_positions()
         if not positions or not yf:
@@ -725,11 +768,67 @@ YES 또는 NO로만 답하세요."""
                 if d is None or len(d) < 2:
                     continue
 
-                # 최근 5분 변동률
                 latest = float(d["Close"].iloc[-1])
                 prev_5m = float(d["Close"].iloc[-2])
                 chg_5m = (latest - prev_5m) / (prev_5m or 1)
 
+                # ── [백테스트 동기화] 3종 청산 조건 체크 ──────────────
+                exit_reason = update_position_stop(code, latest)
+
+                if exit_reason:
+                    entry_price = data.get("entry_price", 0)
+                    pnl_pct = (latest - entry_price) / entry_price if entry_price > 0 else 0
+
+                    reason_label = {
+                        "stop":        f"트레일링 스탑 (고점대비 -{TRAILING_STOP_PCT*100:.0f}%)",
+                        "take_profit": f"익절 +{TAKE_PROFIT_PCT*100:.0f}% 달성",
+                        "time_stop":   f"타임스탑 {TIME_STOP_DAYS}일 초과",
+                    }.get(exit_reason, exit_reason)
+
+                    print(f"  {'💰' if exit_reason=='take_profit' else '🔴'} "
+                          f"{code}: {reason_label} "
+                          f"(수익률 {pnl_pct:+.2%}) → 전량 청산")
+
+                    # 텔레그램 알림
+                    try:
+                        from tools.notifier_tools import _send
+                        emoji = "💰" if exit_reason == "take_profit" else "🔴"
+                        _send(f"{emoji} <b>{code} 청산</b>\n"
+                              f"사유: {reason_label}\n"
+                              f"수익률: {pnl_pct:+.2%}\n"
+                              f"현재가: {latest:,.0f}원")
+                    except Exception:
+                        pass
+
+                    # 실제 시장가 청산 주문 (v2.1: sell_market 함수명 수정)
+                    try:
+                        from tools.order_executor import sell_market
+                        qty = data.get("quantity", 0)
+                        if qty > 0:
+                            dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
+                            sell_market(code, qty, dry_run=dry_run)
+                    except Exception as sell_e:
+                        logger.error(f"{code} 청산 주문 실패: {sell_e}")
+
+                    # 포지션 제거 + 당일 재진입 방지 (손절/타임스탑만)
+                    remove_position(code)
+                    if exit_reason in ("stop", "time_stop"):
+                        add_to_blacklist(code)
+
+                    # 거래 로그
+                    try:
+                        from tools.trade_logger import log_trade
+                        log_trade("SELL", code,
+                                  exit_reason=exit_reason,
+                                  pnl_pct=round(pnl_pct, 4),
+                                  exit_price=latest,
+                                  reason=reason_label)
+                    except Exception:
+                        pass
+
+                    continue  # 청산됐으면 급변 감지 스킵
+
+                # ── 급변 감지 (청산 조건 미충족 종목만) ──────────────
                 if abs(chg_5m) >= STOCK_RAPID_ALERT_PCT:
                     print(f"  🚨 {code}: 5분내 {chg_5m:+.1%} 급변! (경고)")
                     self._trigger_macro_reanalysis(f"보유종목 {code} 급변 {chg_5m:+.1%}")

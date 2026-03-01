@@ -476,8 +476,38 @@ async def job_weekly_report():
 #  스케줄러 모드 (기본)
 # ══════════════════════════════════════════════════════════════
 
+async def job_fred_release_setup():
+    """06:00 — 오늘 FRED 발표 일정 조회 후 동적 Job 등록"""
+    if not is_market_open_day():
+        # 미국 발표는 한국 비개장일에도 수집 (야간 발표 대부분)
+        pass
+    try:
+        from data_collector.macro.fred_release_scheduler import setup_daily_fred_jobs
+        count = await setup_daily_fred_jobs(_scheduler_ref)
+        logger.info(f"FRED 발표 Job {count}개 등록")
+    except Exception as e:
+        logger.error(f"FRED 발표 일정 설정 실패: {e}", exc_info=True)
+
+
+async def job_fred_weekly_preview():
+    """월요일 09:00 — 이번 주 FRED 발표 일정 텔레그램 알림"""
+    now = datetime.now(KST)
+    if now.weekday() != 0:  # 월요일만
+        return
+    try:
+        from data_collector.macro.fred_release_scheduler import send_weekly_schedule_preview
+        await send_weekly_schedule_preview()
+    except Exception as e:
+        logger.error(f"FRED 주간 일정 알림 실패: {e}", exc_info=True)
+
+
+# 스케줄러 전역 참조 (fred_release_setup에서 동적 Job 등록용)
+_scheduler_ref = None
+
+
 async def run_scheduler():
     """APScheduler 기반 24시간 상시 운영 모드"""
+    global _scheduler_ref
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
 
@@ -491,6 +521,7 @@ async def run_scheduler():
     _load_agents()
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+    _scheduler_ref = scheduler  # fred_release_setup에서 동적 Job 등록용
 
     # ── 일일 스케줄 ──────────────────────────────────────────
     # 토큰 갱신
@@ -498,6 +529,13 @@ async def run_scheduler():
                       id="token_refresh_morning", name="토큰 갱신 (아침)")
     scheduler.add_job(job_refresh_token, CronTrigger(hour=23, minute=0),
                       id="token_refresh_night", name="토큰 갱신 (야간)")
+
+    # FRED 발표 일정 기반 동적 수집 (06:00 조회 → 발표 직후 자동 수집)
+    scheduler.add_job(job_fred_release_setup, CronTrigger(hour=6, minute=0),
+                      id="fred_release_setup", name="FRED 발표 일정 설정")
+    # 월요일 09:00 이번 주 FRED 발표 미리보기
+    scheduler.add_job(job_fred_weekly_preview, CronTrigger(hour=9, minute=0),
+                      id="fred_weekly_preview", name="FRED 주간 일정 알림")
 
     # Agent 1: 거시경제 분석
     scheduler.add_job(job_macro_analysis, CronTrigger(hour=8, minute=30),

@@ -1,7 +1,9 @@
 # head_strategist.py — 헤드 전략가 에이전트 (Agent 3)
 # 최종 매매 결정 + 포트폴리오 관리 + 포지션 사이징
 # stock_eval의 position_pct + 매크로 전략을 종합하여 최종 주문 결정
+# v2.1 개선: Agent3→4 실제 매수 실행 연결 (buy_with_fallback 3단계 폴백)
 
+import os
 import logging
 from datetime import datetime
 
@@ -21,12 +23,28 @@ from config.settings import (
     TRACK2_QUALIFY_PNL, TRACK2_EVAL_TIME, TRACK2_CHG_MIN,
     TRACK2_MAX_POSITIONS, TRACK2_DECISION_TIME,
     INTRADAY_TIME_WEIGHT,
+    # v2 신규 (2026-02-27)
+    MACRO_BOOST_ENABLED, KOSPI_STRONG_MOMENTUM_PCT,
+    USD_STRONG_MA20_ABOVE, MACRO_BOOST_POSITION_MULT,
+    MACRO_BOOST_MAX_POSITIONS,
+    EVENT_FILTER_ENABLED, EVENT_MIN_DAY_RETURN,
+    EVENT_WEAK_POSITION_MULT,
+    TAKE_PROFIT_PCT, TIME_STOP_DAYS, TRAILING_STOP_PCT,
 )
 
 from tools.trade_logger import log_trade, log_signal, log_risk_event
 from tools.notifier_tools import notify_trade_decision
 
 logger = logging.getLogger("head_strategist")
+
+
+def _tg_notify(msg: str):
+    """텔레그램 알림 헬퍼 (실패 시 조용히 무시)."""
+    try:
+        from tools.notifier_tools import _send
+        _send(msg)
+    except Exception:
+        pass
 
 class HeadStrategist:
     """헤드 전략가 — 최종 매매 결정 및 포트폴리오 관리"""
@@ -109,17 +127,35 @@ class HeadStrategist:
             macro_position_pct *= 1.1
             print(f"  📈 [매크로 필터] KOSPI 5일 +{kospi_5d_pct:.1f}% → 포지션 10% 가산")
 
+        # ── [매크로 필터 4] 매크로 부스트 — KOSPI5d>3% & 달러강세 (v2, p=0.0295 ★) ──
+        # 50,000회 백테스트: 해당 국면 평균 수익률 4.26% vs 베이스 2.19% (+94%)
+        macro_boost_active = False
+        max_positions_effective = MAX_POSITIONS
+        if MACRO_BOOST_ENABLED:
+            usd_above_ma20 = macro.get("usd_above_ma20", False)
+            if (isinstance(kospi_5d_pct, (int, float)) and
+                    kospi_5d_pct >= KOSPI_STRONG_MOMENTUM_PCT and usd_above_ma20):
+                macro_boost_active = True
+                macro_position_pct *= MACRO_BOOST_POSITION_MULT
+                max_positions_effective = MACRO_BOOST_MAX_POSITIONS
+                print(f"  🚀 [매크로 부스트] KOSPI5d +{kospi_5d_pct:.1f}% & 달러강세"
+                      f" → 포지션 +{(MACRO_BOOST_POSITION_MULT-1)*100:.0f}%, 한도 {max_positions_effective}종목")
+                log_risk_event("MACRO_BOOST", level="INFO",
+                               message=f"매크로 부스트 활성: KOSPI5d={kospi_5d_pct:.1f}%, USD>MA20")
+
         print(f"\n  매크로 전략: {strategy}")
         print(f"  매크로 포지션 비중: {macro_position_pct*100:.0f}%")
         print(f"  리스크 레벨: {risk_level}")
+        if macro_boost_active:
+            print(f"  🚀 매크로 부스트: 활성 (최대 {max_positions_effective}종목)")
 
         # 3) 현재 포지션 확인
         positions = get_positions()
         current_count = len(positions)
-        print(f"  현재 보유: {current_count}/{MAX_POSITIONS}종목")
+        print(f"  현재 보유: {current_count}/{max_positions_effective}종목")
 
         # 4) 신규 매수 검토
-        if current_count < MAX_POSITIONS:
+        if current_count < max_positions_effective:
             watch_list = get_state("watch_list") or []
             scanner_result = get_state("scanner_result") or {}
             selected = scanner_result.get("selected") or []
@@ -140,7 +176,7 @@ class HeadStrategist:
                                message=f"오프닝 러시 구간 신규 매수 차단 ({now_time})")
 
             for code in watch_list:
-                if current_count >= MAX_POSITIONS:
+                if current_count >= max_positions_effective:
                     log_signal(code, "BUY_SIGNAL", executed=False,
                                skip_reason="max_positions")
                     break
@@ -183,8 +219,22 @@ class HeadStrategist:
                 info = selected_map.get(code, {})
                 eval_pct = info.get("position_pct", 0.5)
 
-                # 최종 포지션 = 기본비율 x 매크로비중 x 평가비중 x 시간가중
-                final_pct = POSITION_SIZE_RATIO * macro_position_pct * eval_pct * time_weight
+                # ── [v2 필터5] 이벤트 부재 신호 약화 (p=0.003 ★) ──
+                # 뉴스분석: 기술신호+이벤트없음 = 1.06% vs +이벤트 = 2.06%
+                # 당일 수익률 < 0% (음봉)인데 돌파 발생 → 신뢰도 낮음
+                event_mult = 1.0
+                if EVENT_FILTER_ENABLED:
+                    day_return = info.get("day_return_pct", None)
+                    vol_ratio = info.get("vol_ratio", 0)
+                    if day_return is not None and day_return < EVENT_MIN_DAY_RETURN and vol_ratio < 3.0:
+                        event_mult = EVENT_WEAK_POSITION_MULT
+                        print(f"    {code}: 이벤트 미동반 (당일 {day_return:.1%}, vol {vol_ratio:.1f}x)"
+                              f" → 포지션 {EVENT_WEAK_POSITION_MULT:.0%}로 축소")
+                        log_signal(code, "EVENT_FILTER", executed=True,
+                                   skip_reason=f"event_weak(ret={day_return:.2%},vol={vol_ratio:.1f})")
+
+                # 최종 포지션 = 기본비율 x 매크로비중 x 평가비중 x 시간가중 x 이벤트배수
+                final_pct = POSITION_SIZE_RATIO * macro_position_pct * eval_pct * time_weight * event_mult
 
                 # [기능3] Recovery 재진입 시 포지션 축소
                 recovery_state = get_state("recovery_state")
@@ -197,7 +247,9 @@ class HeadStrategist:
                 elif strategy == "공격적":
                     final_pct *= 1.2
 
-                final_pct = min(final_pct, POSITION_SIZE_RATIO)  # 상한
+                # 상한: 매크로 부스트 시 상한도 비례 확대
+                pos_cap = POSITION_SIZE_RATIO * (MACRO_BOOST_POSITION_MULT if macro_boost_active else 1.0)
+                final_pct = min(final_pct, pos_cap)
 
                 if final_pct < 0.02:
                     print(f"    {code}: 포지션 너무 작음 ({final_pct:.1%}) — 스킵")
@@ -217,7 +269,60 @@ class HeadStrategist:
                 actions_taken.append(action)
                 print(f"    📈 매수 결정: {code} ({final_pct:.1%})")
 
-                # 텔레그램 매매 알림
+                # ── [Agent 3→4] 실제 매수 주문 실행 ──────────────────
+                # buy_with_fallback: IOC+3틱 → IOC+5틱 → 시장가 3단계 폴백
+                exec_result = None
+                try:
+                    from tools.order_executor import buy_with_fallback, get_balance
+                    from tools.websocket_feeder import get_latest_quote
+
+                    # 1) 잔고 조회로 투입 금액 계산
+                    balance = get_balance()
+                    total_eval = balance.get("total_eval", 0) or balance.get("cash", 0)
+                    invest_amount = int(total_eval * final_pct)
+
+                    # 2) 웹소켓에서 실시간 호가 가져오기
+                    quote = get_latest_quote(code)
+                    ask1 = quote.get("ask1", 0) if quote else 0
+
+                    if ask1 <= 0 or invest_amount <= 0:
+                        logger.warning(f"    {code}: ask1={ask1}, invest={invest_amount} → 매수 건너뜀")
+                    else:
+                        qty = max(1, invest_amount // ask1)
+                        print(f"    💰 {code}: 투입 {invest_amount:,}원 / ask1 {ask1:,}원 / {qty}주 주문")
+
+                        # 3단계 폴백 체인으로 매수
+                        exec_result = await buy_with_fallback(
+                            code, qty, ask1,
+                            dry_run=(os.getenv("DRY_RUN", "false").lower() == "true"),
+                            notify_fn=lambda msg: _tg_notify(msg),
+                        )
+
+                        if exec_result and exec_result.get("success"):
+                            filled = exec_result.get("filled_qty", qty)
+                            final_price = exec_result.get("final_price", ask1)
+                            stage = exec_result.get("stage_used", 1)
+                            print(f"    ✅ {code} 체결 완료: {filled}주 Stage{stage}")
+                            action["filled_qty"] = filled
+                            action["entry_price"] = final_price
+                            action["stage_used"] = stage
+                        else:
+                            print(f"    ❌ {code} 매수 실패 — 포지션 등록 스킵")
+                            actions_taken.remove(action)
+                            continue
+
+                except ImportError as e:
+                    # 모듈 미로드 시 (테스트/개발 환경) 매수 스킵 후 계속
+                    logger.debug(f"order_executor import 실패(개발환경): {e}")
+                except Exception as e:
+                    logger.error(f"    {code} 매수 주문 오류: {e}")
+                    try:
+                        from tools.notifier_tools import _send
+                        _send(f"⚠️ {code} 매수 주문 오류: {e}")
+                    except Exception:
+                        pass
+
+                # ── 텔레그램 매매 알림 ───────────────────────────────
                 try:
                     notify_trade_decision(
                         "BUY", code, final_pct,
@@ -240,7 +345,11 @@ class HeadStrategist:
                            eval_grade=info.get("eval_grade", "?"),
                            eval_score=info.get("eval_score"))
 
-                # 임시 포지션 등록
+                # 실제 체결가 기반으로 포지션 등록
+                entry_price_actual = (
+                    action.get("entry_price", 0)
+                    or info.get("entry_price", 0)
+                )
                 add_position(code, {
                     "entry_pct": final_pct,
                     "eval_grade": info.get("eval_grade", "?"),
@@ -249,10 +358,12 @@ class HeadStrategist:
                     "pyramiding_done": False,
                     "pyramid_count": 0,
                     "entry_atr": info.get("entry_atr", 0),
+                    "filled_qty": action.get("filled_qty", 0),
+                    "entry_price": entry_price_actual,
                 })
                 # ── [2트랙] Track 1로 초기 태깅 ──
                 set_track_info(code, track=1,
-                               entry_price=info.get("entry_price", 0),
+                               entry_price=entry_price_actual,
                                entry_time=datetime.now().strftime("%H:%M:%S"))
                 current_count += 1
 
@@ -276,7 +387,7 @@ class HeadStrategist:
 
         print(f"\n  ✅ [{self.name}] 전략 완료")
         print(f"     매매 결정: {len(actions_taken)}건")
-        print(f"     보유 종목: {current_count}/{MAX_POSITIONS}")
+        print(f"     보유 종목: {current_count}/{max_positions_effective}")
 
         return result
 

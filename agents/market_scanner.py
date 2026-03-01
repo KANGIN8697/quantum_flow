@@ -36,14 +36,14 @@ try:
     from tools.notifier_tools import notify_error
 except ImportError:
     MAX_WATCH_STOCKS = 30
-    DONCHIAN_PERIOD  = 20
-    RSI_LOWER        = 50
-    RSI_UPPER        = 70
+    DONCHIAN_PERIOD  = 25     # v2 확정
+    RSI_LOWER        = 30     # v2 확정
+    RSI_UPPER        = 75     # v2 확정
     SECTOR_DELTA_BONUS_MAX = 6
     SECTOR_DELTA_BONUS_MIN = 2
     SECTOR_MORNING_TIME    = "09:20"
     SECTOR_MIDDAY_TIME     = "11:30"
-    VOLUME_SURGE_RATIO     = 1.5
+    VOLUME_SURGE_RATIO     = 3.0  # v2 확정
     CHG_STRENGTH_THRESHOLD = 0.70
     TF15_MA_SHORT  = 3
     TF15_MA_MID    = 8
@@ -554,6 +554,10 @@ async def run_scanner(round_label: str = "1차") -> list:
             "position_pct": info.get("position_pct", 0.5),
             "sector": info.get("sector", ""),
             "entry_atr": info.get("entry_atr", 0),
+            # v2: 이벤트 필터용 (head_strategist에서 참조)
+            "day_return_pct": info.get("day_return_pct", 0),
+            "vol_ratio": info.get("vol_ratio", 0),
+            "entry_price": info.get("entry_price", 0),
         })
     set_state("scanner_result", {"selected": scanner_selected})
 
@@ -683,6 +687,10 @@ async def run_emergency_rescan(reason: str) -> dict:
             "position_pct": ev.get("position_pct", 0.5),
             "sector": _sector_name,
             "entry_atr": 0,
+            # v2: 이벤트 필터용
+            "day_return_pct": ev.get("day_return_pct", 0),
+            "vol_ratio": ev.get("vol_ratio", 0),
+            "entry_price": ev.get("entry_price", 0),
         })
     set_state("scanner_result", {"selected": scanner_selected})
     

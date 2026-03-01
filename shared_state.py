@@ -3,7 +3,7 @@
 
 import threading
 from datetime import datetime
-from config.settings import INITIAL_STOP_ATR, TRAILING_STOP_ATR
+from config.settings import INITIAL_STOP_ATR, TRAILING_STOP_ATR, TRAILING_STOP_PCT, TAKE_PROFIT_PCT, TIME_STOP_DAYS
 
 shared_state = {
     "risk_off": False,           # True 시 전 매매 중단
@@ -108,35 +108,66 @@ def add_position(code: str, data: dict):
             data["stop_loss_type"] = "initial"  # "initial" | "trailing"
         if "highest_since_entry" not in data:
             data["highest_since_entry"] = data.get("entry_price", 0)
+        if "entry_date" not in data:
+            # 타임스탑 계산용 진입일 (캘린더 기준)
+            data["entry_date"] = datetime.now().strftime("%Y-%m-%d")
         shared_state["positions"][code] = data
 
 
-def update_position_stop(code: str, current_price: float):
+def update_position_stop(code: str, current_price: float) -> str:
     """
-    포지션 트레일링 스톱 업데이트 (thread-safe)
-    현재가가 최고가를 경신하면 손절가도 따라 올림
-    Returns: stop_triggered (bool)
+    포지션 청산 조건 체크 (thread-safe)
+    백테스트와 동일한 3가지 청산 조건:
+      1) 트레일링 스탑: 고점 대비 -TRAILING_STOP_PCT% (백테스트 방식, v2=2%)
+      2) 익절:          진입가 대비 +TAKE_PROFIT_PCT% (v2=7%)
+      3) 타임스탑:      보유 일수 >= TIME_STOP_DAYS (v2=3일)
+
+    Returns: "stop" | "take_profit" | "time_stop" | "" (청산 불필요)
     """
-    # TRAILING_STOP_ATR는 모듈 상단에서 import 완료
     with _lock:
         pos = shared_state["positions"].get(code)
         if not pos:
-            return False
+            return ""
 
-        # 최고가 갱신
-        if current_price > pos.get("highest_since_entry", 0):
+        entry_price = pos.get("entry_price", 0)
+        if entry_price <= 0:
+            return ""
+
+        # ── 최고가 갱신 ──
+        if current_price > pos.get("highest_since_entry", entry_price):
             pos["highest_since_entry"] = current_price
-            # 트레일링 스톱으로 전환
-            atr = pos.get("atr_value", 0)
-            if atr > 0:
-                new_stop = current_price - (atr * TRAILING_STOP_ATR)
-                # 손절가는 올라가기만 함 (내려가지 않음)
-                if new_stop > pos.get("stop_loss_price", 0):
-                    pos["stop_loss_price"] = new_stop
-                    pos["stop_loss_type"] = "trailing"
 
-        # 손절 트리거 체크
-        return current_price <= pos.get("stop_loss_price", 0)
+        peak = pos.get("highest_since_entry", entry_price)
+
+        # ── 1) 트레일링 스탑: 고점 대비 -TRAILING_STOP_PCT (백테스트 동일 방식) ──
+        trail_stop = peak * (1 - TRAILING_STOP_PCT)
+        # 초기 ATR 손절가보다 높아진 경우에만 트레일링으로 전환
+        atr_stop = pos.get("stop_loss_price", 0)
+        eff_stop = max(atr_stop, trail_stop)
+        pos["stop_loss_price"] = eff_stop
+        pos["stop_loss_type"] = "trailing" if trail_stop > atr_stop else pos.get("stop_loss_type", "initial")
+
+        if current_price <= eff_stop:
+            return "stop"
+
+        # ── 2) 익절: 진입가 대비 +TAKE_PROFIT_PCT ──
+        pnl_pct = (current_price - entry_price) / entry_price
+        if pnl_pct >= TAKE_PROFIT_PCT:
+            return "take_profit"
+
+        # ── 3) 타임스탑: 보유 일수 초과 ──
+        entry_date_str = pos.get("entry_date", "")
+        if entry_date_str:
+            try:
+                from datetime import date
+                entry_date = date.fromisoformat(entry_date_str)
+                hold_days = (date.today() - entry_date).days
+                if hold_days >= TIME_STOP_DAYS:
+                    return "time_stop"
+            except (ValueError, TypeError):
+                pass
+
+        return ""  # 청산 불필요
 
 
 def remove_position(code: str):

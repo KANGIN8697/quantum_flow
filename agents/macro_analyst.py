@@ -366,8 +366,9 @@ async def run_macro_analysis() -> dict:
             if isinstance(chg, (int, float)):
                 kospi_daily_change = chg
 
-    # KOSPI 실제 5일 누적 변화율 계산 (yfinance 사용)
+    # KOSPI 실제 5일 누적 변화율 + USD/KRW MA20 비교 (yfinance 사용)
     kospi_5d_change = 0.0
+    usd_above_ma20 = False
     try:
         import yfinance as yf
         ks = yf.download("^KS11", period="10d", interval="1d",
@@ -384,6 +385,20 @@ async def run_macro_analysis() -> dict:
         kospi_5d_change = kospi_daily_change  # 폴백: 일간 변화율
         logger.debug(f"KOSPI 5일 변화율 계산 실패 (폴백: 일간): {e}")
 
+    # v2: 달러/원 20일 이평선 상회 여부 (매크로 부스트 조건)
+    try:
+        import yfinance as yf
+        fx = yf.download("USDKRW=X", period="30d", interval="1d",
+                         progress=False)
+        if fx is not None and len(fx) >= 20:
+            usd_close = float(fx["Close"].iloc[-1])
+            usd_ma20 = float(fx["Close"].rolling(20).mean().iloc[-1])
+            usd_above_ma20 = usd_close > usd_ma20
+            print(f"  📊 USD/KRW: {usd_close:,.0f} vs MA20 {usd_ma20:,.0f}"
+                  f" → {'강세' if usd_above_ma20 else '약세'}")
+    except Exception as e:
+        logger.debug(f"USD/KRW MA20 계산 실패: {e}")
+
     set_state("macro_result", {
         "strategy": macro_strategy,
         "regime": macro_regime,          # 명시적 레짐 (Bull/Neutral/Bear)
@@ -394,6 +409,7 @@ async def run_macro_analysis() -> dict:
         "risk": risk_label,
         "usdkrw_change_pct": usdkrw_change,
         "kospi_5d_change_pct": kospi_5d_change,
+        "usd_above_ma20": usd_above_ma20,      # v2 매크로 부스트용
     })
 
     # [기능6] 섹터 멀티플라이어 저장 (검증 + 클리핑)
