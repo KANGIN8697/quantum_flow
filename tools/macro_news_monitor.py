@@ -356,17 +356,15 @@ class TrendAnalyzer:
 
 class NewsCollector:
     """
-    4개 소스에서 뉴스를 수집하여 RollingNewsBuffer에 적재한다.
-    - 연합뉴스 RSS (한국 속보)
-    - Reuters RSS (글로벌)
+    6개 소스에서 뉴스를 수집하여 RollingNewsBuffer에 적재한다.
+    - 연합뉴스 RSS (한국 속보, 최속)
+    - Reuters RSS (글로벌 breaking news)
+    - AP통신 RSS (글로벌 속보, Reuters 대안)
+    - MarketWatch RSS (미국 시장 특화)
     - Google News RSS (다양성)
     - 네이버 뉴스 API (키워드 확장)
     """
 
-    # 연합뉴스 RSS 피드 URL
-    YONHAP_RSS = "https://www.yonhapnewstv.co.kr/browse/feed/"
-    # Reuters 글로벌 뉴스 RSS
-    REUTERS_RSS = "https://www.reutersagency.com/feed/?best-topics=business-finance"
     # Google News RSS (한국 경제)
     GOOGLE_NEWS_QUERIES = ["한국 증시", "코스피 전망", "미국 경제 금리", "전쟁 국제정세"]
 
@@ -396,10 +394,12 @@ class NewsCollector:
         all_articles = []
         by_source = {}
 
-        # 병렬 수집 (4개 소스)
+        # 병렬 수집 (6개 소스)
         collectors = {
             "YONHAP": self._fetch_yonhap,
             "REUTERS": self._fetch_reuters,
+            "AP": self._fetch_ap_news,
+            "MARKETWATCH": self._fetch_marketwatch,
             "GOOGLE": self._fetch_google_news,
             "NAVER": self._fetch_naver_news,
         }
@@ -645,6 +645,117 @@ class NewsCollector:
 
         except Exception as e:
             logger.warning(f"[NAVER] 수집 오류: {e}")
+
+        return articles
+
+    def _fetch_ap_news(self) -> list[dict]:
+        """AP통신 RSS 수집 (글로벌 속보, Reuters 대안)"""
+        if not _SESSION:
+            return []
+        articles = []
+        try:
+            feeds = [
+                "https://rsshub.app/apnews/topics/business",       # 경제/비즈니스
+                "https://rsshub.app/apnews/topics/world-news",     # 국제
+            ]
+            for feed_url in feeds:
+                try:
+                    resp = _SESSION.get(
+                        feed_url,
+                        headers={"User-Agent": _USER_AGENT},
+                        timeout=10,
+                    )
+                    if resp.status_code != 200:
+                        continue
+
+                    if feedparser:
+                        feed = feedparser.parse(resp.content)
+                        for entry in feed.entries[:10]:
+                            title = entry.get("title", "").strip()
+                            if not title:
+                                continue
+                            articles.append({
+                                "title": title,
+                                "source": "AP",
+                                "published": entry.get("published", ""),
+                                "link": entry.get("link", ""),
+                                "description": entry.get("summary", "")[:200],
+                            })
+                    else:
+                        root = ET.fromstring(resp.content)
+                        for item in root.findall(".//item")[:10]:
+                            title = item.findtext("title", "").strip()
+                            if not title:
+                                continue
+                            articles.append({
+                                "title": title,
+                                "source": "AP",
+                                "published": item.findtext("pubDate", ""),
+                                "link": item.findtext("link", ""),
+                                "description": item.findtext("description", "")[:200],
+                            })
+                except Exception as e:
+                    logger.debug(f"AP통신 RSS 파싱 실패 ({feed_url}): {e}")
+                    continue
+
+        except Exception as e:
+            logger.warning(f"[AP] 수집 오류: {e}")
+
+        return articles
+
+    def _fetch_marketwatch(self) -> list[dict]:
+        """MarketWatch RSS 수집 (미국 시장 뉴스 특화)"""
+        if not _SESSION:
+            return []
+        articles = []
+        try:
+            feeds = [
+                "https://feeds.content.dowjones.io/public/rss/mw_topstories",  # Top Stories
+                "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",  # Market Pulse
+                "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",  # Real-time
+            ]
+            for feed_url in feeds:
+                try:
+                    resp = _SESSION.get(
+                        feed_url,
+                        headers={"User-Agent": _USER_AGENT},
+                        timeout=10,
+                    )
+                    if resp.status_code != 200:
+                        continue
+
+                    if feedparser:
+                        feed = feedparser.parse(resp.content)
+                        for entry in feed.entries[:10]:
+                            title = entry.get("title", "").strip()
+                            if not title:
+                                continue
+                            articles.append({
+                                "title": title,
+                                "source": "MARKETWATCH",
+                                "published": entry.get("published", ""),
+                                "link": entry.get("link", ""),
+                                "description": entry.get("summary", "")[:200],
+                            })
+                    else:
+                        root = ET.fromstring(resp.content)
+                        for item in root.findall(".//item")[:10]:
+                            title = item.findtext("title", "").strip()
+                            if not title:
+                                continue
+                            articles.append({
+                                "title": title,
+                                "source": "MARKETWATCH",
+                                "published": item.findtext("pubDate", ""),
+                                "link": item.findtext("link", ""),
+                                "description": item.findtext("description", "")[:200],
+                            })
+                except Exception as e:
+                    logger.debug(f"MarketWatch RSS 파싱 실패 ({feed_url}): {e}")
+                    continue
+
+        except Exception as e:
+            logger.warning(f"[MARKETWATCH] 수집 오류: {e}")
 
         return articles
 
