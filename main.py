@@ -445,6 +445,19 @@ async def job_daily_report():
         trades = get_daily_trades()
         create_and_send_daily_dashboard(perf, trades, positions)
 
+        # 뉴스-시장 검증 리포트 (일일)
+        try:
+            from tools.news_market_validator import (
+                generate_validation_report, format_validation_report_telegram
+            )
+            from tools.notifier_tools import send_telegram
+            val_report = generate_validation_report()
+            val_msg = format_validation_report_telegram(val_report)
+            send_telegram(val_msg)
+            print(f"  📊 뉴스-시장 검증: 일치율 {val_report['match_rate_24h']:.0%}")
+        except Exception as val_err:
+            logger.debug(f"뉴스-시장 검증 리포트 실패 (비치명적): {val_err}")
+
         # LLM 비용 일일 요약 + 리셋
         from tools.cost_tracker import get_cost_tracker
         ct = get_cost_tracker()
@@ -506,6 +519,17 @@ async def job_hourly_news_scan():
             f"[뉴스스캔 {now_str}] 신규 {result['total_new']}건 / "
             f"총 {result['total_in_buffer']}건 / 긴급도 {result['urgency']}"
         )
+
+        # ── 미국 시장 지수 스냅샷 동시 기록 (뉴스-시장 상관관계 검증용) ──
+        try:
+            from tools.news_market_validator import record_hourly_snapshot
+            record_hourly_snapshot(
+                urgency=result["urgency"],
+                trend_narrative=result["trend_narrative"],
+                urgent_items=result.get("urgent_items", []),
+            )
+        except Exception as val_err:
+            logger.debug(f"시장 스냅샷 기록 실패 (비치명적): {val_err}")
 
         # ── 긴급도 변화 시 텔레그램 알림 ──
         if result["urgency_changed"] and result["urgency"] != "NONE":
