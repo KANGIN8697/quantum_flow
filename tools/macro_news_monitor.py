@@ -59,8 +59,9 @@ URGENCY_NAMES = {v: k for k, v in URGENCY_LEVELS.items()}
 # 분석 윈도우 (시간 단위)
 TREND_WINDOWS = [1, 3, 6, 12, 24]
 
-# 버퍼 최대 보관 시간 (24시간)
-BUFFER_MAX_HOURS = 24
+# 버퍼 최대 보관 시간 (7일 = 168시간)
+# 24시간 트렌드 분석 + 과거 유사 패턴 비교용
+BUFFER_MAX_HOURS = 168
 
 # ── 공통 유틸 ─────────────────────────────────────────────────
 

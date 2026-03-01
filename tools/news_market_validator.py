@@ -92,7 +92,7 @@ class ValidationBuffer:
     메모리 + 파일 이중 저장 (재시작 복원 가능).
     """
 
-    def __init__(self, max_days: int = 7):
+    def __init__(self, max_days: int = 90):
         self._snapshots: list[MarketSnapshot] = []
         self._lock = threading.Lock()
         self._max_seconds = max_days * 86400
