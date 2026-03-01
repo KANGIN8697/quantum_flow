@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from collections import defaultdict, Counter
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -59,9 +60,13 @@ URGENCY_NAMES = {v: k for k, v in URGENCY_LEVELS.items()}
 # 분석 윈도우 (시간 단위)
 TREND_WINDOWS = [1, 3, 6, 12, 24]
 
-# 버퍼 최대 보관 시간 (7일 = 168시간)
-# 24시간 트렌드 분석 + 과거 유사 패턴 비교용
-BUFFER_MAX_HOURS = 168
+# 버퍼 최대 보관 시간 (90일 = 2160시간)
+# 트렌드 분석 + 과거 유사 패턴 비교 + 스냅샷과 장기 상관관계 분석용
+# 90일 기준 약 33MB (메모리) + JSONL 파일 이중 저장
+BUFFER_MAX_HOURS = 2160
+
+# 뉴스 버퍼 파일 저장 경로
+NEWS_BUFFER_DIR = "outputs/news_buffer"
 
 # ── 공통 유틸 ─────────────────────────────────────────────────
 
@@ -103,20 +108,24 @@ def _score_article(title: str, description: str = "") -> tuple:
 
 class RollingNewsBuffer:
     """
-    24시간 롤링 윈도우로 뉴스 기사를 보관한다.
-    메모리 기반, thread-safe.
+    90일 롤링 윈도우로 뉴스 기사를 보관한다.
+    메모리 + JSONL 파일 이중 저장, thread-safe.
+    서비스 재시작 시 파일에서 자동 복원.
 
     각 기사 구조:
     {
         "hash": str,          # 제목 기반 해시 (중복 제거)
         "title": str,
-        "source": str,        # YONHAP / REUTERS / GOOGLE / NAVER
+        "source": str,        # YONHAP / REUTERS / GOOGLE / NAVER / AP / MARKETWATCH
         "published": str,     # ISO 형식 또는 원본 날짜
         "collected_at": float, # time.time() 수집 시각
         "link": str,
         "score": int,         # 긴급도 점수
         "keywords": list,     # 매칭된 키워드
     }
+
+    파일 저장: outputs/news_buffer/news_YYYY-MM-DD.jsonl (일별)
+    90일 기준 약 33MB 메모리, 파일도 동일
     """
 
     def __init__(self, max_hours: int = BUFFER_MAX_HOURS):
@@ -124,15 +133,19 @@ class RollingNewsBuffer:
         self._hashes: set = set()  # 빠른 중복 체크
         self._lock = threading.Lock()
         self._max_seconds = max_hours * 3600
+        self._buffer_dir = Path(NEWS_BUFFER_DIR)
+        self._buffer_dir.mkdir(parents=True, exist_ok=True)
 
     def add_articles(self, articles: list[dict]) -> int:
         """
         기사 목록을 버퍼에 추가한다.
         중복(해시 기반)은 자동 스킵.
+        추가된 기사는 일별 JSONL 파일에도 저장.
         Returns: 실제 추가된 건수
         """
         added = 0
         now = time.time()
+        new_articles = []
 
         with self._lock:
             for art in articles:
@@ -152,9 +165,92 @@ class RollingNewsBuffer:
                 art.setdefault("collected_at", now)
                 self._articles.append(art)
                 self._hashes.add(h)
+                new_articles.append(art)
                 added += 1
 
+        # 파일에 저장 (lock 밖에서 I/O 수행)
+        if new_articles:
+            self._persist_articles(new_articles)
+
         return added
+
+    def _persist_articles(self, articles: list[dict]):
+        """신규 기사를 일별 JSONL 파일에 추가 저장"""
+        try:
+            import json
+            from datetime import datetime as _dt
+            date_str = _dt.now().strftime("%Y-%m-%d")
+            filepath = self._buffer_dir / f"news_{date_str}.jsonl"
+            with open(filepath, "a", encoding="utf-8") as f:
+                for art in articles:
+                    # 저장 시 link 제외 (용량 절약, 제목+점수+키워드만 필수)
+                    record = {
+                        "hash": art.get("hash", ""),
+                        "title": art.get("title", ""),
+                        "source": art.get("source", ""),
+                        "published": art.get("published", ""),
+                        "collected_at": art.get("collected_at", 0),
+                        "score": art.get("score", 0),
+                        "keywords": art.get("keywords", []),
+                    }
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"뉴스 버퍼 파일 저장 실패: {e}")
+
+    def load_from_files(self, days_back: int = 90):
+        """
+        파일에서 과거 기사를 복원한다 (서비스 재시작 시 호출).
+        최근 days_back일간의 JSONL 파일을 읽어 메모리에 적재.
+        """
+        import json
+        from datetime import datetime as _dt, timedelta as _td
+
+        loaded = 0
+        cutoff = time.time() - (days_back * 86400)
+
+        for day_offset in range(days_back):
+            target_date = _dt.now() - _td(days=day_offset)
+            date_str = target_date.strftime("%Y-%m-%d")
+            filepath = self._buffer_dir / f"news_{date_str}.jsonl"
+
+            if not filepath.exists():
+                continue
+
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        art = json.loads(line)
+                        collected_at = art.get("collected_at", 0)
+                        if collected_at < cutoff:
+                            continue  # 만료 기사 스킵
+                        h = art.get("hash", "")
+                        if h and h not in self._hashes:
+                            self._articles.append(art)
+                            self._hashes.add(h)
+                            loaded += 1
+            except Exception as e:
+                logger.warning(f"뉴스 버퍼 파일 복원 실패 ({filepath}): {e}")
+
+        if loaded > 0:
+            logger.info(f"RollingNewsBuffer 파일 복원: {loaded}건 (최근 {days_back}일)")
+
+    def cleanup_old_files(self, days_keep: int = 90):
+        """90일 초과 JSONL 파일을 삭제한다."""
+        from datetime import datetime as _dt, timedelta as _td
+        import re
+
+        cutoff_date = (_dt.now() - _td(days=days_keep)).strftime("%Y-%m-%d")
+        try:
+            for f in self._buffer_dir.glob("news_*.jsonl"):
+                match = re.search(r"news_(\d{4}-\d{2}-\d{2})\.jsonl", f.name)
+                if match and match.group(1) < cutoff_date:
+                    f.unlink()
+                    logger.debug(f"만료 뉴스 파일 삭제: {f.name}")
+        except Exception as e:
+            logger.warning(f"만료 뉴스 파일 정리 실패: {e}")
 
     def cleanup_expired(self):
         """24시간 초과 기사를 삭제한다."""
@@ -771,11 +867,13 @@ _singleton_lock = threading.Lock()
 
 
 def get_news_buffer() -> RollingNewsBuffer:
-    """RollingNewsBuffer 싱글턴 반환"""
+    """RollingNewsBuffer 싱글턴 반환 (최초 생성 시 파일에서 자동 복원)"""
     global _buffer_instance
     with _singleton_lock:
         if _buffer_instance is None:
             _buffer_instance = RollingNewsBuffer()
+            _buffer_instance.load_from_files(days_back=90)
+            _buffer_instance.cleanup_old_files(days_keep=90)
         return _buffer_instance
 
 
